@@ -1,0 +1,75 @@
+{
+  "name": "kitauji-transpose",
+  "productName": "北宇治译奏部",
+  "version": "0.0.1",
+  "private": true,
+  "description": "KitaUji Transpose：日文轻小说翻译与校对工作台",
+  "type": "module",
+  "main": "dist-electron/main.mjs",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "build:electron": "npm run gen:prompts && node scripts/build-electron.mjs",
+    "build:renderer": "vite build",
+    "build": "npm run build:electron && npm run build:renderer",
+    "package:dir": "npm run build && electron-builder --win dir --publish never",
+    "package:win": "npm run build && node scripts/package-win.mjs",
+    "test": "cross-env TSX_TSCONFIG_PATH=tsconfig.test.json node --import tsx --disable-warning=ExperimentalWarning --test \"tests/**/*.test.ts\"",
+    "dev:renderer": "vite",
+    "dev:preview": "vite --config vite.preview.config.ts --mode browser-preview --host 127.0.0.1 --port 4176 --strictPort",
+    "dev": "npm run build:electron && cross-env-shell VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "start": "npm run build && electron .",
+    "gen:prompts": "cross-env TSX_TSCONFIG_PATH=tsconfig.electron.json node --import tsx scripts/gen-prompts.ts"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.12",
+    "epub": "^2.1.1",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.562.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.5.4",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "cross-env": "^10.1.0",
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2"
+  },
+  "build": {
+    "appId": "com.kitauji.polish-workshop",
+    "productName": "北宇治译奏部",
+    "files": [
+      "dist-electron/**/*",
+      "dist/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release/candidate"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "dir"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.electron.json",
+  "include": ["src/core/**/*.ts", "src/shared/**/*.ts", "tests/**/*.ts"]
+}

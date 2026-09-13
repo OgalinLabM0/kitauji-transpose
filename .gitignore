@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-electron/
+release/
+artifacts/
+backups/
+private-local/
+data/
+data-location.json
+data-location.json.*
+.env*
+*.sqlite*
+*.epub
+*.v3backup
