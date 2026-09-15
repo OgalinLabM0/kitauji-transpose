@@ -240,7 +240,7 @@ export function parseScene(raw: string, expectedIds: readonly string[]): Protoco
 }
 export const parseHonorific = (raw: string): ProtocolResult<HonorificOutput> => parseWith(honorificOutputSchema, raw);
 export interface PreReadParagraph { id: string; sourceText: string; seriesOrdinal: number }
-export function parsePreRead(raw: string, paragraphs?: readonly PreReadParagraph[], knownNames: readonly string[] = []): ProtocolResult<PreReadOutput> {
+export function parsePreRead(raw: string, paragraphs?: readonly PreReadParagraph[], knownNames: readonly string[] = [], nameBoundaryReview?: (name:string,paragraphId:string,quote:string)=>boolean): ProtocolResult<PreReadOutput> {
   const result = parseWith(preReadOutputSchema, raw);
   if (!result.ok || !paragraphs) return result;
   const idError = checkIdSet(paragraphs.map(p => p.id), result.value.reviewed_ids);
@@ -294,7 +294,7 @@ export function parsePreRead(raw: string, paragraphs?: readonly PreReadParagraph
     }
     const sources = c.evidence_ids.map(id => byId.get(id)!.sourceText);
     const nameSources = sources.map(source => visibleNameSource(source));
-    if (c.name_evidence && (!c.evidence_ids.includes(c.name_evidence.paragraph_id) || !validNameQuote(c.name_jp, c.name_evidence.quote, byId.get(c.name_evidence.paragraph_id)?.sourceText ?? ''))) {
+    if (c.name_evidence && (!c.evidence_ids.includes(c.name_evidence.paragraph_id) || !(validNameQuote(c.name_jp, c.name_evidence.quote, byId.get(c.name_evidence.paragraph_id)?.sourceText ?? '') || (containsVisibleQuote(byId.get(c.name_evidence.paragraph_id)?.sourceText ?? '',c.name_evidence.quote) && visibleNameSource(c.name_evidence.quote).includes(c.name_jp) && nameBoundaryReview?.(c.name_jp,c.name_evidence.paragraph_id,c.name_evidence.quote))))) {
       const known = knownNames.includes(c.name_jp);
       // An existing identity needs no new main-name receipt in every batch.
       // Discard only this optional receipt when its quote really exists in the

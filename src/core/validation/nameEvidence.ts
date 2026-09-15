@@ -1,10 +1,12 @@
-export interface NameEvidence { paragraph_id: string; quote: string }
+export interface NameEvidence { paragraph_id: string; quote: string; reviewId?: string }
 
 // A title can adjoin a name without a Japanese word separator. Recognize
 // bounded title forms, never an arbitrary Han suffix or a cropped source.
 const militaryRank = '(?:准尉|少尉|中尉|大尉|少佐|中佐|大佐|准将|少将|中将|大将|元帥|伍長|軍曹|曹長|兵長|上等兵|一等兵|二等兵)';
 const formalTitle = '(?:(?:陸軍|海軍|空軍|航空|魔導|軍医)?'+militaryRank+'|(?:教皇|王室|政府)?(?:特使|大使)|教授|准教授|助教授|社長|会長|部長|課長|店長|隊長|団長|司令官)';
-const nameTitleSuffix = new RegExp('^'+formalTitle+'(?:殿|様|氏|閣下)?(?=$|[\\p{P}\\p{Z}\\p{Script=Hiragana}])','u');
+// Numeric school designations are suffix boundaries, not glossary candidates.
+const studentTitle = '(?:第?[一二三四五六七八九十百〇零0-9０-９]+(?:号生|年生|期生))';
+const nameTitleSuffix = new RegExp('^(?:'+formalTitle+'|'+studentTitle+')(?:殿|様|氏|閣下)?(?=$|[\\p{P}\\p{Z}\\p{Script=Hiragana}])','u');
 const nameTitlePrefix = new RegExp('(?:^|[\\p{P}\\p{Z}\\p{Script=Hiragana}])'+formalTitle+'$','u');
 
 // Stylized speech can spell grammatical endings in katakana too. Require the

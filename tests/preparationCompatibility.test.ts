@@ -1,0 +1,53 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {fixture} from './helpers';
+import {compatiblePreparationContracts,preparationContractAccepted,preparationContract} from '../src/core/ai/preparationContract';
+import {PreReadCheckpoint} from '../src/core/workflow/preReadCheckpoint';
+import {originalSourceProof,characterSourceCurrent} from '../src/core/db/characterSources';
+import {narrativeSourceCurrent} from '../src/core/db/narrativeSources';
+const previous='3f0d3e16def7f74832ab72fab53e7ac5c703af0b7cc7d85e4b84152a86e57a84';
+test('preparation compatibility is one exact directional revision, never future or unknown contracts',()=>{
+ assert.equal(preparationContractAccepted('preread',previous),true);
+ assert.equal(preparationContractAccepted('preread','24e293a6ff2ee337b149d4457ddd5e453d2ef9e1d729eca461a05e92cb19309d'),true);
+ assert.equal(preparationContractAccepted('terms',previous),false);
+ assert.equal(preparationContractAccepted('preread','old'),false);
+ assert.deepEqual(compatiblePreparationContracts('preread','future'),['future']);
+ assert.deepEqual(compatiblePreparationContracts('preread',previous),[previous]);
+ assert.equal(compatiblePreparationContracts('preread')[0],preparationContract('preread'));
+});
+test('previous checkpoint is read unchanged and still expires on source changes',t=>{
+ const f=fixture();t.after(()=>f.store.close());const p=f.store.projects.getParagraph(f.paragraphId)!;
+ new PreReadCheckpoint(f.store,p.chapterId,false).save([p]);
+ const key=`prep:preread-progress:${p.chapterId}`;
+ const entries=JSON.parse(f.store.db.get<{value:string}>('SELECT value FROM meta WHERE key=?',[key])!.value);
+ entries[p.id].signature=createHash('sha256').update(JSON.stringify([previous,f.store.projects.chapterSourceSignature(p.chapterId),p.id,p.seriesOrdinal,p.sourceText])).digest('hex');
+ const raw=JSON.stringify(entries);f.store.db.run('UPDATE meta SET value=? WHERE key=?',[raw,key]);
+ assert.equal(new PreReadCheckpoint(f.store,p.chapterId,false).done(p),true);
+ assert.equal(f.store.db.get<{value:string}>('SELECT value FROM meta WHERE key=?',[key])!.value,raw);
+ f.store.db.run('UPDATE paragraphs SET source_text=? WHERE id=?',['雪が降る。',p.id]);
+ assert.equal(new PreReadCheckpoint(f.store,p.chapterId,false).done(f.store.projects.getParagraph(p.id)!),false);
+});
+test('compatible character and event provenance retain source and content validation',t=>{
+ const f=fixture();t.after(()=>f.store.close());
+ const proof=JSON.parse(originalSourceProof(f.store.db,f.seriesId,f.ids));proof.contract=previous;
+ const raw=JSON.stringify(proof);assert.equal(characterSourceCurrent(f.store.db,raw),true);
+ const event=f.store.knowledge.addEvent({seriesId:f.seriesId,atPara:1,summaryJp:'雨が降る。',revealsToReader:true,characterIds:[],evidenceIds:f.ids});
+ f.store.db.run('UPDATE narrative_provenance SET contract=? WHERE record_id=?',[previous,event]);
+ assert.equal(narrativeSourceCurrent(f.store.db,'event',event),true);
+ f.store.db.run("UPDATE narrative_events SET summary_jp='別の内容' WHERE id=?",[event]);
+ assert.equal(narrativeSourceCurrent(f.store.db,'event',event),false);
+ f.store.db.run("UPDATE paragraphs SET source_text='雪。' WHERE id=?",[f.paragraphId]);
+ assert.equal(characterSourceCurrent(f.store.db,raw),false);
+});
+test('compatible chapter receipt is reused without rewriting it',t=>{
+ const f=fixture();t.after(()=>f.store.close());const p=f.store.projects.getParagraph(f.paragraphId)!;
+ f.store.projects.markPrepDone('preread',p.chapterId);
+ const key=`prep:preread:${p.chapterId}`;
+ const proof=JSON.parse(f.store.db.get<{value:string}>('SELECT value FROM meta WHERE key=?',[key])!.value);proof.contract=previous;
+ const raw=JSON.stringify(proof);f.store.db.run('UPDATE meta SET value=? WHERE key=?',[raw,key]);
+ assert.ok(f.store.projects.prepDoneChapters('preread',f.volumeId).has(p.chapterId));
+ assert.equal(f.store.db.get<{value:string}>('SELECT value FROM meta WHERE key=?',[key])!.value,raw);
+ f.store.db.run("UPDATE paragraphs SET source_text='雪。' WHERE id=?",[p.id]);
+ assert.equal(f.store.projects.prepDoneChapters('preread',f.volumeId).size,0);
+});

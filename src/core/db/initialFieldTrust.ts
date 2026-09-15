@@ -1,3 +1,4 @@
+import { hasVerifiedNameMentionDb } from '../workflow/nameMentionReceipts';
 import { createHash } from 'node:crypto';
 import type { ProjectStore } from './index';
 import type { Db } from './database';
@@ -118,9 +119,10 @@ export function stageInitialField(store: ProjectStore, args: {characterId:string
   const supplied=args.sourceIds.map(id=>store.projects.getParagraph(id)).filter(p=>!!p);
   const max=Math.max(args.at,...supplied.map(p=>p!.seriesOrdinal));
   const names=store.db.all<{source_proof:string;valid_from_para:number}>(`SELECT source_proof,valid_from_para FROM character_name_observations WHERE character_id=? AND name_jp=? AND valid_from_para<=? ORDER BY valid_from_para`,[row.id,row.canonical_name_jp,max]);
-  const name=names.find(n=>characterSourceCurrent(store.db,n.source_proof) && (()=>{const q=fromJson<{nameEvidence?:InitialQuote}>(n.source_proof,{}).nameEvidence;return q && validNameQuote(row.canonical_name_jp,q.quote,store.projects.getParagraph(q.paragraph_id)?.sourceText??'');})());
+  const name=names.find(n=>characterSourceCurrent(store.db,n.source_proof) && (()=>{const q=fromJson<{nameEvidence?:InitialQuote}>(n.source_proof,{}).nameEvidence;return q && (validNameQuote(row.canonical_name_jp,q.quote,store.projects.getParagraph(q.paragraph_id)?.sourceText??'') || hasVerifiedNameMentionDb(store.db,q.paragraph_id,row.canonical_name_jp,(q as InitialQuote & {reviewId?:string}).reviewId));})());
   const fallback=supplied.filter(p=>validNameQuote(row.canonical_name_jp,p!.sourceText,p!.sourceText)).sort((a,b)=>a!.seriesOrdinal-b!.seriesOrdinal)[0];
-  const nameQuote=name?fromJson<{nameEvidence:InitialQuote}>(name.source_proof,{} as any).nameEvidence:fallback?{paragraph_id:fallback.id,quote:fallback.sourceText}:null;
+  const rawNameQuote=name?fromJson<{nameEvidence:InitialQuote}>(name.source_proof,{} as any).nameEvidence:fallback?{paragraph_id:fallback.id,quote:fallback.sourceText}:null;
+  const nameQuote=rawNameQuote?{paragraph_id:rawNameQuote.paragraph_id,quote:rawNameQuote.quote}:null;
   // At most the original extraction window plus two adjacent raw paragraphs per evidence.
   const ids=new Set(args.evidenceIds);
   if(nameQuote)ids.add(nameQuote.paragraph_id);

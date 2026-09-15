@@ -1,3 +1,4 @@
+import { NAME_MENTION_REVIEW_PROMPT } from '../validation/nameMentionReview';
 import { INITIAL_OWNERSHIP_PROMPT, INITIAL_SUPPORT_PROMPT } from './prompts/initialFieldPrompt';
 import { requestIdentity, redactCredential } from './requestIdentity';
 import {translationThinking,TRANSLATION_THINKING_POLICY} from './translationThinking';
@@ -25,6 +26,7 @@ import type { ProtocolResult, ProtocolError } from './protocol';
 import { Semaphore, abortableDelay } from './semaphore';
 
 export interface CallOptions {
+  nameMentionReview?: boolean;
   initialFieldAttribution?: 'ownership'|'support';
   sourceStyle?: boolean;
   inlineStage?: 'body'|'body-focus'|'layout'|'layout-segments'|'layout-anchors'|'punctuation-choice';
@@ -83,6 +85,7 @@ export class AiClient {
     const selected = (opts.judge && this.cfg.judge) ? this.cfg.judge : this.cfg.primary;
     const stage=translationThinking(selected,opts,this.cfg.translationThinkingPolicy);
     const provider={...stage.provider};
+    if(opts.nameMentionReview){provider.thinkingMode='disabled';delete provider.reasoningEffort;}
     const identity=requestIdentity(provider);
     if(stage.maxOutputTokens!==undefined)opts={...opts,maxOutputTokens:stage.maxOutputTokens};
     if (opts.termSelection && opts.workstation !== 'term-extractor') throw new Error('术语筛选提示只能用于术语工位');
@@ -93,8 +96,9 @@ export class AiClient {
     if(opts.inlineStage==='body-focus'&&opts.workstation!=='chinese-editor')throw new Error('局部表达替换只用于中文编辑');
     if(opts.sourceStyle&&(opts.workstation!=='naturalness-reviewer'||opts.inlineStage||opts.termSelection||opts.voiceEvidence||opts.fieldAttribution||opts.registerEvidence))throw new Error('原作表达复核只能独立用于读感工位');
     if(opts.initialFieldAttribution && (opts.workstation!=='character-evidence-reviewer' || opts.termSelection || opts.voiceEvidence || opts.fieldAttribution || opts.registerEvidence || opts.inlineStage || opts.sourceStyle))throw new Error('初次属性复核只能独立用于人物证据工位');
-    const selectedSystem = opts.initialFieldAttribution?(opts.initialFieldAttribution==='ownership'?INITIAL_OWNERSHIP_PROMPT:INITIAL_SUPPORT_PROMPT):opts.sourceStyle?SOURCE_STYLE_PROMPT:opts.inlineStage==='body-focus'?EXPRESSION_FOCUS_PROMPT:opts.inlineStage==='punctuation-choice'?COMMA_SELECTION_PROMPT:opts.inlineStage==='body'?visibleBodyPrompt(opts.workstation as 'faithful-translator'|'chinese-editor'):opts.inlineStage==='layout'?IMMUTABLE_LAYOUT_PROMPT:opts.inlineStage==='layout-segments'?LAYOUT_SEGMENTS_PROMPT:opts.inlineStage==='layout-anchors'?LAYOUT_ANCHORS_PROMPT:opts.registerEvidence ? REGISTER_EVIDENCE_PROMPT : opts.fieldAttribution ? FIELD_ATTRIBUTION_PROMPT : opts.voiceEvidence ? VOICE_EVIDENCE_PROMPT : opts.termSelection ? TERM_SELECTION_INSTRUCTION : systemPromptFor(opts.workstation);
-    const system = opts.inlineStage && !['body','body-focus'].includes(opts.inlineStage) ? selectedSystem : withMandatoryRequirements(selectedSystem,opts.workstation);
+    if(opts.nameMentionReview&&(opts.workstation!=='character-evidence-reviewer'||opts.initialFieldAttribution||opts.sourceStyle||opts.inlineStage||opts.termSelection||opts.voiceEvidence||opts.fieldAttribution||opts.registerEvidence))throw new Error('姓名核对只能作为独立证据步骤');
+    const selectedSystem = opts.nameMentionReview?NAME_MENTION_REVIEW_PROMPT:opts.initialFieldAttribution?(opts.initialFieldAttribution==='ownership'?INITIAL_OWNERSHIP_PROMPT:INITIAL_SUPPORT_PROMPT):opts.sourceStyle?SOURCE_STYLE_PROMPT:opts.inlineStage==='body-focus'?EXPRESSION_FOCUS_PROMPT:opts.inlineStage==='punctuation-choice'?COMMA_SELECTION_PROMPT:opts.inlineStage==='body'?visibleBodyPrompt(opts.workstation as 'faithful-translator'|'chinese-editor'):opts.inlineStage==='layout'?IMMUTABLE_LAYOUT_PROMPT:opts.inlineStage==='layout-segments'?LAYOUT_SEGMENTS_PROMPT:opts.inlineStage==='layout-anchors'?LAYOUT_ANCHORS_PROMPT:opts.registerEvidence ? REGISTER_EVIDENCE_PROMPT : opts.fieldAttribution ? FIELD_ATTRIBUTION_PROMPT : opts.voiceEvidence ? VOICE_EVIDENCE_PROMPT : opts.termSelection ? TERM_SELECTION_INSTRUCTION : systemPromptFor(opts.workstation);
+    const system = opts.nameMentionReview || (opts.inlineStage && !['body','body-focus'].includes(opts.inlineStage)) ? selectedSystem : withMandatoryRequirements(selectedSystem,opts.workstation);
     const release = await this.sem.acquire(opts.signal);
     const started = Date.now();
     let jsonMode = true; let lastErr: ProviderError | null = null;

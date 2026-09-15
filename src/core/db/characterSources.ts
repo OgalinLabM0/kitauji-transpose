@@ -1,3 +1,4 @@
+import { hasVerifiedNameMentionDb } from '../workflow/nameMentionReceipts';
 import { identityDependenciesCurrent, readIdentityProof, currentIdentityDependencies, withIdentityRead } from './identitySources';
 import type { IdentityDependency } from './identitySources';
 import { createHash } from 'node:crypto';
@@ -5,7 +6,7 @@ import { Db, fromJson } from './database';
 import { preparationContract, preparationContractAccepted } from '../ai/preparationContract';
 import { eventSourceFingerprint, narrativeSourceCurrent } from './narrativeSources';
 
-interface Proof { ids: string[]; signature: string; contract: string; events: { id: string; fingerprint: string }[]; identities: IdentityDependency[] }
+interface Proof { nameReview?:{name:string;paragraphId:string;id:string}; ids: string[]; signature: string; contract: string; events: { id: string; fingerprint: string }[]; identities: IdentityDependency[] }
 function snapshot(db: Db, ids: string[]) {
   return ids.map(id => db.get(`SELECT p.id,p.source_text,p.series_ordinal,p.paragraph_type,p.scene_id,s.chapter_id,c.volume_id,v.series_id FROM paragraphs p JOIN scenes s ON s.id=p.scene_id JOIN chapters c ON c.id=s.chapter_id JOIN volumes v ON v.id=c.volume_id WHERE p.id=?`, [id]) ?? null);
 }
@@ -30,6 +31,7 @@ export function originalSourceProof(db: Db, seriesId: string, ids: string[], eve
 export function characterSourceCurrent(db: Db, raw: string | null | undefined): boolean {
   const proof = fromJson<Proof | null>(raw, null);
   if (!proof || !Array.isArray(proof.ids) || !proof.ids.length || !proof.ids.every(id => typeof id === 'string') || !preparationContractAccepted('preread', proof.contract)) return false;
+  if(proof.nameReview&&!hasVerifiedNameMentionDb(db,proof.nameReview.paragraphId,proof.nameReview.name,proof.nameReview.id))return false;
   if (!Array.isArray(proof.events) || !proof.events.every(e => e && typeof e.id === 'string' && typeof e.fingerprint === 'string')) return false;
   const memo = new Map<string, boolean>();
   return readIdentityProof(db, `character:${raw}`, () => {

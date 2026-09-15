@@ -1,9 +1,10 @@
+import { hasVerifiedNameMentionDb } from '../workflow/nameMentionReceipts';
 import { bindChangeProof, changeTarget, changeTables, verifyChangeProof } from './knowledgeChanges';
 import { Db, newId, nowIso, fromJson, toJson } from './database';
 import { bindNarrativeSources, endObservedRelationship, narrativeSourceCurrent, previousNarrativeEvents } from './narrativeSources';
 import { characterSourceCurrent, characterSourceProof, originalSourceProof } from './characterSources';
 import { characterAt, saveCharacterFact, fieldDecisions, undoFieldDecision, type CharacterField } from './characterHistory';
-import { validNameQuote, type NameEvidence } from '../validation/nameEvidence';
+import { validNameQuote, containsVisibleQuote, type NameEvidence } from '../validation/nameEvidence';
 import type { CharacterView, QuirkProfile, AddressTrajectoryView } from '@shared/types';
 
 /** 一人称/代词/泛称/常见军衔职务：不是人名 */
@@ -63,8 +64,9 @@ export class KnowledgeRepo {
       const observationAt = Math.max(...sourceIds.map(id => this.db.get<{series_ordinal: number}>('SELECT series_ordinal FROM paragraphs WHERE id=?', [id])?.series_ordinal ?? -1));
       let nameAt = observationAt;
       if (nameEvidence) {
+        if(nameEvidence.reviewId&&!hasVerifiedNameMentionDb(this.db,nameEvidence.paragraph_id,c.nameJp,nameEvidence.reviewId))throw new Error('姓名核对依据已失效或不属于此人物原文');
         const paragraph = this.db.get<{source_text:string;series_ordinal:number}>('SELECT source_text,series_ordinal FROM paragraphs WHERE id=?', [nameEvidence.paragraph_id]);
-        if (!evidenceIds.includes(nameEvidence.paragraph_id) || !sourceIds.includes(nameEvidence.paragraph_id) || !paragraph || !validNameQuote(c.nameJp, nameEvidence.quote, paragraph.source_text)) throw new Error('姓名证据不属于本次独立主名原文');
+        if (!evidenceIds.includes(nameEvidence.paragraph_id) || !sourceIds.includes(nameEvidence.paragraph_id) || !paragraph || !(validNameQuote(c.nameJp, nameEvidence.quote, paragraph.source_text) || (containsVisibleQuote(paragraph.source_text,nameEvidence.quote) && hasVerifiedNameMentionDb(this.db,nameEvidence.paragraph_id,c.nameJp,nameEvidence.reviewId)))) throw new Error('姓名证据不属于本次独立主名原文');
         nameAt = paragraph.series_ordinal;
       }
       const id = this.findByName(c.seriesId, c.nameJp, observationAt)?.id ?? this.upsertCharacter({ seriesId: c.seriesId, introducedVolume: c.introducedVolume, nameJp: c.nameJp, plurality: null }, observationAt, 'model');
@@ -72,7 +74,7 @@ export class KnowledgeRepo {
       if (row.canonical_name_jp === c.nameJp) {
         this.db.run("UPDATE character_name_origins SET origin='model' WHERE character_id=? AND origin='legacy'", [id]);
         const sourceProof = characterSourceProof(this.db, id, sourceIds, eventIds);
-        const proof = nameEvidence ? JSON.stringify({ ...JSON.parse(sourceProof), nameEvidence }) : sourceProof;
+        const proof = nameEvidence ? JSON.stringify({ ...JSON.parse(sourceProof), nameEvidence, ...(nameEvidence.reviewId?{nameReview:{name:c.nameJp,paragraphId:nameEvidence.paragraph_id,id:nameEvidence.reviewId}}:{}) }) : sourceProof;
         this.db.run('INSERT OR IGNORE INTO character_name_observations(id,character_id,name_jp,source_proof,valid_from_para,created_at) VALUES(?,?,?,?,?,?)', [newId(), id, c.nameJp, proof, nameAt, nowIso()]);
       }
       if (row.locked_by_user) return id;

@@ -6,22 +6,24 @@ import { TERM_EXTRACT_PROMPT } from './prompts/termPrompts';
 /** Bump the protocol revision when parser/write semantics change without prompt changes.
  * Terms certify extraction only: existing translation proposals are not rerun by extraction. */
 const contracts = {
-  preread: ['split-preread-identity-dependencies-v9', CHARACTER_PRE_READ_PROMPT, EVENT_PRE_READ_PROMPT],
+  preread: ['split-preread-name-review-v10', CHARACTER_PRE_READ_PROMPT, EVENT_PRE_READ_PROMPT],
   terms: ['term-extraction-selection-v2', TERM_EXTRACT_PROMPT, TERM_SELECTION_INSTRUCTION],
 } as const;
 export const preparationContract = (kind: keyof typeof contracts): string =>
   createHash('sha256').update(JSON.stringify(contracts[kind])).digest('hex');
 
-// Exact, one-way compatibility for the surface-name instruction correction.
+// Exact, one-way compatibility for surface-name and independently reviewed name boundaries.
 // Earlier successfully validated observations retain identical factual meaning;
 // new normalization only accepts responses the earlier parser rejected. This
 // does not re-sign any receipt or exempt source, identity or event dependencies.
 // A future prompt/parser contract gets no inherited compatibility automatically.
+const nameReviewRevision = '74b53d5a3d6259aa8f046094608092dac69cfce0714099abe5fc7a390b24e4bc';
 const surfaceNameRevision = {
   previous: '3f0d3e16def7f74832ab72fab53e7ac5c703af0b7cc7d85e4b84152a86e57a84',
   current: '24e293a6ff2ee337b149d4457ddd5e453d2ef9e1d729eca461a05e92cb19309d',
 };
 export function compatiblePreparationContracts(kind: keyof typeof contracts, current = preparationContract(kind)): readonly string[] {
+  if (kind === 'preread' && current === nameReviewRevision) return [current, surfaceNameRevision.current, surfaceNameRevision.previous];
   return kind === 'preread' && current === surfaceNameRevision.current ? [current, surfaceNameRevision.previous] : [current];
 }
 export function preparationContractAccepted(kind: keyof typeof contracts, recorded: unknown): boolean {

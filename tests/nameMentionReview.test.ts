@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {parseNameMentionReview} from '../src/core/validation/nameMentionReview';
+const candidates=[{id:'p1',name:'アリス',source:'「アリス特別研究生、来なさい。」'},{id:'p2',name:'律',source:'法律を読む。'}];
+const items=[{id:'p1',decision:'person',quote:candidates[0]!.source},{id:'p2',decision:'not_person',quote:candidates[1]!.source}];
+const parse=(rows:unknown,cs=candidates)=>parseNameMentionReview(JSON.stringify({items:rows}),cs);
+test('independent mention receipts retain person and non-person without creating identity claims',()=>assert.equal(parse(items).ok,true));
+test('uncertain is preserved, not promoted to person',()=>{const r=parse([{...items[0],decision:'uncertain'},items[1]]);assert.equal(r.ok,true);if(r.ok)assert.equal(r.value[0]!.decision,'uncertain');});
+test('missing duplicate foreign or fabricated receipt is rejected',()=>{for(const broken of [items.slice(0,1),[items[0],items[0]],[{...items[0],id:'foreign'},items[1]],[{...items[0],quote:'アリスは走った。'},items[1]],[{...items[0],quote:'来なさい。'},items[1]],[{...items[0],trusted:true},items[1]]])assert.equal(parse(broken).ok,false);});
+test('receipt cannot survive changed source or candidate',()=>{assert.equal(parse(items,[{...candidates[0]!,source:'少女が来た。'},candidates[1]!]).ok,false);assert.equal(parse(items,[{...candidates[0]!,name:'サラ'},candidates[1]!]).ok,false);});
+test('invalid input identities and malformed JSON fail closed',()=>{assert.equal(parse(items,[candidates[0]!,candidates[0]!]).ok,false);assert.equal(parseNameMentionReview('{',candidates).ok,false);assert.equal(parseNameMentionReview('{"items":[]}',[]).ok,false);});

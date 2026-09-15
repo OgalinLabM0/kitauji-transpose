@@ -118,7 +118,7 @@ export class PrepRunner {
           })) throw new Error('预读原文或段落位置在调用期间已变化，旧结果未写入，请继续本册重新核对');
           };
           let out: PreReadOutput;
-          try { out = await splitPreRead(this.ai, user, batch, knownNames, checkBatch, this.opts.signal, label => this.emit({ detail: detail(label), message: `${label} · ${chapterLabel} · 已核对 ${processedParagraphs}/${paras.length} 段` })); }
+          try { out = await splitPreRead(this.ai, user, batch, knownNames, checkBatch, this.opts.signal, label => this.emit({ detail: detail(label), message: `${label} · ${chapterLabel} · 已核对 ${processedParagraphs}/${paras.length} 段` }), this.store); }
           catch (e) {
             if (!(e instanceof AiCallFailed) || e.lastError instanceof ProviderError && !['shape','truncated'].includes(e.lastError.kind)) throw e;
             if (batch.length > 1) { const mid = Math.ceil(batch.length / 2); work.unshift(batch.slice(0, mid), batch.slice(mid)); this.store.translations.log({ level: 'warning', workstationId: 'book-pre-reader', paragraphId: batch[0]!.id, message: `预读块失败（${batch.length} 段）：${e.message}；拆成两半重试` }); this.emit({ detail: detail('自动缩小批次重试'), message: `正在自动缩小处理范围（${batch.length} → ${mid} 段），已完成部分保留，无需操作` }); continue; }
@@ -167,7 +167,7 @@ export class PrepRunner {
                 // 只有可由主名确定性推导的姓/名/去后缀形式自动入库；昵称、代号、相关实体留人工确认。
                 if (!KnowledgeRepo.isSafeAutoAlias(c.name_jp, a)) {
                   const seen = this.store.projects.paragraphsContaining(seriesId, a, 20);
-                  if (!KnowledgeRepo.isGenericName(a) && seen.length >= 2) {
+                  if (!KnowledgeRepo.isGenericName(a) && seen.length >= 1) {
                     const groupKey = `unassigned-name:${seriesId}:${a}`;
                     if (!this.store.translations.hasPending(seriesId, 'warning', groupKey)) this.store.translations.enqueue({ seriesId, kind: 'warning', paragraphId: seen[0]!.id, groupKey, title: `原文名字候选「${a}」未归属人物 → 请核对`, payload: { note: `预读模型把「${a}」列为「${c.name_jp}」的别名，但程序无法从名字规则确认；它在原文中出现 ${seen.length} 处，可能是独立人物、代号或称呼。为防人物串线，未自动绑定。请在人物页核对：若是独立人物请新增；若确是同一人可手动添加别名/合并。`, candidateName: a, claimedCharacter: c.name_jp, occurrences: seen.length } });
                   }
