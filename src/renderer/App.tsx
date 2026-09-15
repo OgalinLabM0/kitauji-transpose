@@ -1,3 +1,4 @@
+import { APP_VERSION } from '@shared/appVersion';
 import { useEffect } from 'react';
 import { DraftIdentityBoundary } from './components/DraftIdentityBoundary';
 import { DraftRecovery } from './components/DraftRecovery';
@@ -38,7 +39,7 @@ function AppContent() {
   return (
     <div className="app">
       <nav className="nav">
-        <div className="nav-brand"><span className="brand-mark"><Feather size={14} /></span><div>北宇治译奏部<small>KitaUji Transpose · 0.0.2</small></div></div>
+        <div className="nav-brand"><span className="brand-mark"><Feather size={14} /></span><div>北宇治译奏部<small>KitaUji Transpose · {APP_VERSION}</small></div></div>
         {cur && (
           <div className="nav-context">
             <div className="title" title={cur.title}>{cur.title}</div>

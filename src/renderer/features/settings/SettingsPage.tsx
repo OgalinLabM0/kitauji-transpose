@@ -1,3 +1,4 @@
+import { APP_VERSION } from '@shared/appVersion';
 import { BackupPanel } from './BackupPanel';
 import { useState, useEffect } from 'react';
 import { useFormDraft } from '../../store/useFormDraft';
@@ -85,7 +86,7 @@ export function SettingsPage() {
           <div className="field"><Switch checked={projectForm.value['export.translate_title']} onChange={v => set('export.translate_title', v)} label="导出时翻译书名和目录" /></div>
         </fieldset>}
         <BackupPanel />
-        <div className="card"><h3>关于</h3><p className="small muted">北宇治译奏部 KitaUji Transpose · 0.0.1<br />书库保存在本机的 library.sqlite 文件里。API 密钥用于向你配置的服务商验证身份；运行 AI 功能时，会发送相关原文与翻译上下文。</p></div>
+        <div className="card"><h3>关于</h3><p className="small muted">北宇治译奏部 KitaUji Transpose · {APP_VERSION}<br />书库保存在本机的 library.sqlite 文件里。API 密钥用于向你配置的服务商验证身份；运行 AI 功能时，会发送相关原文与翻译上下文。</p></div>
         <div className="card"><h3 style={{ color: 'var(--status-error)' }}><AlertTriangle size={14} style={{ verticalAlign: -2, marginRight: 4 }} />危险操作</h3>
           <p className="small muted" style={{ marginTop: 0 }}>会删除全部书库内容，包括原文、译文、人物和术语；接口设置保留。请先保存还没提交的编辑。清空前必须成功备份，备份失败时会取消清空；成功提示会给出备份路径，可在上方“检查备份并恢复”中恢复。</p>
           <button className="btn btn-danger btn-sm" onClick={() => setResetOpen(true)}><Trash2 size={13} /> 清空全部数据</button>

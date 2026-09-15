@@ -1,3 +1,4 @@
+import { APP_VERSION } from '@shared/appVersion';
 import type { Api, PrepStatus } from '../../shared/ipc';
 import type { QualityGateReport, WorkflowProgress } from '../../shared/types';
 import { createPreviewData, PREVIEW_DATE, PREVIEW_SERIES, PREVIEW_VOLUME } from './data';
@@ -67,7 +68,7 @@ export function createPreviewApi(notify: (message: string) => void = () => {}): 
   const api: Api = {
     app: {
       getLibraryIdentity: async () => ({ version: 1, libraryId: '00000000-0000-4000-8000-000000000008', epoch: 0 }),
-      version: async () => '0.0.1-browser-preview',
+      version: async () => APP_VERSION + '-browser-preview',
       chooseDataDirectory: deny('更改数据目录'),
       getDataDirectory: async () => '浏览器预览不使用本机书库',
       getProviderSettings: async () => copy(data.provider),
