@@ -2,6 +2,9 @@ import { useVolumeOverview } from '../../store/useVolumeOverview';
 import { useApp, tryApi } from '../../store/app';
 import { useState, useEffect } from 'react';
 import { api } from '../../api';
+import type { VolumeRunState } from '@shared/ipc';
+import { taskPhaseLabel } from '../../components/TaskProgressView';
+import { draftIdentity } from '../../store/draftIdentityBridge';
 
 export function TaskOverview({ volumeId, onNavigate }: { volumeId: string; onNavigate?: () => void }) {
   const [retrying, setRetrying] = useState(false);
@@ -10,7 +13,22 @@ export function TaskOverview({ volumeId, onNavigate }: { volumeId: string; onNav
   useEffect(() => { setRetryMessage(''); }, [volumeId]);
   const { setPage, jumpToParagraph } = useApp();
   const { value, error, running } = useVolumeOverview(volumeId);
-  if (running) return <section className="task-overview" aria-live="polite">任务运行中。稿件状态将在运行结束后重新检查。</section>;
+  const [liveRun, setLiveRun] = useState<{ volumeId: string; run: VolumeRunState | null } | null>(null);
+  useEffect(() => {
+    let active = true;
+    setLiveRun(null);
+    if (!running) return;
+    const token = draftIdentity.snapshot().token;
+    const read = () => void api.workflow.volumeRunState(volumeId).then(run => {
+      if (active && draftIdentity.isCurrent(token)) setLiveRun({ volumeId, run });
+    }).catch(() => { if (active) setLiveRun(null); });
+    read(); const timer = setInterval(read, 1500);
+    return () => { active = false; clearInterval(timer); };
+  }, [volumeId, running]);
+  if (running) {
+    const run = liveRun?.volumeId === volumeId ? liveRun.run : null;
+    return <section className="task-overview" aria-live="polite"><strong>{run?.status === 'running' ? `正在${run.detail?.label ?? taskPhaseLabel(run.phase)}` : '后台任务运行中'}</strong>{run?.detail && <p>{run.detail.chapterTitle && `${run.detail.chapterTitle} · `}当前步骤：{run.detail.done} / {run.detail.total} {run.detail.unit}</p>}{run && <p className="small muted">{run.message}</p>}<p className="small muted">当前任务进度见上方任务区。稿件通过检查的数量将在本次处理结束后核对。</p></section>;
+  }
   if (!value) return <section className="task-overview" aria-live="polite">{error ? `状态读取失败：${error}` : '正在检查当前状态…'}</section>;
   const runLabels = { running: '上次任务状态待刷新', stopped: '已停止，可继续', attention: '处理未完成', done: '上次处理已完成' };
   const nextStep = value.report.ok

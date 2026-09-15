@@ -173,7 +173,11 @@ export interface QualityGateReport {
 }
 export interface ExportResult { snapshotId?: string; snapshotAt?: string; preview?: boolean; ok: boolean; outputPath: string | null; report: QualityGateReport; writtenBlocks: number; skippedBlocks: number; keptBlocks: number; messages: string[] }
 
+export interface WorkflowStepProgress {
+  phase: string; label: string; done: number; total: number; unit: '段' | '章' | '册' | '组' | '项'; chapterTitle?: string;
+}
 export interface WorkflowProgress {
+  detail?: WorkflowStepProgress | null;
   running: boolean; paused: boolean; phase: string; done: number; total: number;
   unknownUsageRequests?: number;
   currentParagraphId: string | null; costUsd: number; inputTokens: number; outputTokens: number; message: string;

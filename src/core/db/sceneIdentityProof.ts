@@ -1,3 +1,4 @@
+import { characterFactCurrent, characterFactFrom, type CharacterFact } from './characterHistory';
 import { createHash } from 'node:crypto';
 import { Db } from './database';
 import { preparationContract } from '../ai/preparationContract';
@@ -45,6 +46,7 @@ export function sceneIdentitySignature(db: Db, paragraphIds: string[]): string {
         if(!characterProofs.has(row.source_proof))characterProofs.set(row.source_proof,characterSourceCurrent(db,row.source_proof));
         row.scene_source_current=characterProofs.get(row.source_proof)!;
       }
+      if(table==='character_field_history') {row.scene_field_current=characterFactCurrent(db,row as unknown as CharacterFact);row.scene_field_local_current=characterFactCurrent(db,row as unknown as CharacterFact,String(row.character_id),'local');row.scene_field_from=characterFactFrom(db,row as unknown as CharacterFact);}
       if(table==='narrative_events'||table==='relationships')row.scene_source_current=narrativeSourceCurrent(db,table==='narrative_events'?'event':'relationship',String(row.id),narrativeProofs);
     }
     if(!db.raw.isTransaction)memo.series.set(series[0]!,data);

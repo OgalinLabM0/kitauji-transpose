@@ -4,6 +4,7 @@ import type { KnowledgeRepo } from '@core/db/knowledgeRepo';
 import { characterFactCurrent, type CharacterFact, type CharacterField } from '@core/db/characterHistory';
 import { characterSourceCurrent, originalSourceProof } from '../db/characterSources';
 import { withIdentityRead } from '../db/identitySources';
+import { stageInitialField } from '../db/initialFieldTrust';
 
 type Observation = Parameters<KnowledgeRepo['observeCharacter']>;
 type Quote = { paragraph_id: string; quote: string };
@@ -38,8 +39,10 @@ export function observeWithConflicts(store: ProjectStore, ...args: Observation):
   return store.transaction(() => {
     const [input, evidenceIds, evidenceByField, quotesByField = {}, sourceIds = evidenceIds, eventIds = [], nameEvidence] = args;
     const observationAt = Math.max(...sourceIds.map(id => store.projects.getParagraph(id)?.seriesOrdinal ?? -1));
-    const row = store.knowledge.findByName(input.seriesId, input.nameJp, observationAt);
-    if (!row || row.locked_by_user) return store.knowledge.observeCharacter(...args);
+    const existing = store.knowledge.findByName(input.seriesId, input.nameJp, observationAt);
+    if (existing?.locked_by_user) return store.knowledge.observeCharacter(...args);
+    const nameId = store.knowledge.observeCharacter({seriesId:input.seriesId,introducedVolume:input.introducedVolume,nameJp:input.nameJp},evidenceIds,evidenceByField,quotesByField,sourceIds,eventIds,nameEvidence);
+    const row = store.knowledge.getCharacter(nameId)!;
     const safe = { ...input };
     for (const [key, field] of [['gender','gender'], ['firstPersonType','first_person_type'], ['speechRegister','speech_register'], ['voiceNotes','voice_notes'], ['plurality','plurality']] as const) {
       const value = input[key];
@@ -51,11 +54,16 @@ export function observeWithConflicts(store: ProjectStore, ...args: Observation):
       const at = Math.max(...paragraphs.map(p => p!.seriesOrdinal));
       if (store.db.get("SELECT 1 FROM character_field_history WHERE character_id=? AND field=? AND origin='user' AND valid_from_para<=?", [row.id,field,at])) continue;
       const history = store.db.all<CharacterFact>("SELECT * FROM character_field_history WHERE character_id=? AND field=? AND origin='model' ORDER BY valid_from_para DESC", [row.id,field]);
-      const facts = withIdentityRead(store.db, () => history.filter(f => characterFactCurrent(store.db, f)));
+      const facts = withIdentityRead(store.db, () => history.filter(f => characterFactCurrent(store.db,f,row.id,['voice_notes','speech_register'].includes(field)?'local':'global')));
       const prior = facts.find(f => f.valid_from_para <= at) ?? facts.at(-1);
-      const before = prior ? JSON.parse(prior.value_json) : history.length ? null : field === 'gender' ? { gender: row.gender } : row[field];
+      const before = prior ? JSON.parse(prior.value_json) : history.length ? null : field === 'gender' ? { gender: store.knowledge.characterAt(row,at).gender } : store.knowledge.characterAt(row,at)[field];
       const proposed = field === 'gender' ? { gender: value, confidence: input.genderConfidence ?? 0, evidenceIds: ids } : value;
-      if (semantic(field,before) == null || semantic(field,before) === 'unknown' || semantic(field,before) === '' || semantic(field,before) === semantic(field,proposed)) continue;
+      if (semantic(field,before) == null || semantic(field,before) === 'unknown' || semantic(field,before) === '') {
+        safe[key]=null;
+        stageInitialField(store,{characterId:row.id,field,value:proposed,at,evidenceIds:ids,quotes:quotesByField[field]??[],sourceIds,eventIds});
+        continue;
+      }
+      if (semantic(field,before) === semantic(field,proposed)) {safe[key]=null;continue;}
       safe[key] = null;
       const previousEvidenceIds: string[] = prior ? JSON.parse(prior.evidence_ids) : [];
       const sources = [...new Set([...previousEvidenceIds,...ids])].map(id => {

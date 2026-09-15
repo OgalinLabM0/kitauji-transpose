@@ -7,6 +7,10 @@ const formalTitle = '(?:(?:陸軍|海軍|空軍|航空|魔導|軍医)?'+military
 const nameTitleSuffix = new RegExp('^'+formalTitle+'(?:殿|様|氏|閣下)?(?=$|[\\p{P}\\p{Z}\\p{Script=Hiragana}])','u');
 const nameTitlePrefix = new RegExp('(?:^|[\\p{P}\\p{Z}\\p{Script=Hiragana}])'+formalTitle+'$','u');
 
+// Stylized speech can spell grammatical endings in katakana too. Require the
+// complete ending and its real boundary; never accept a cropped compound.
+const katakanaNameEnding = /^(?:トヤラ|サン|クン|チャン|サマ|ドノ)(?=$|[\p{P}\p{Z}\p{Script=Hiragana}])/u;
+
 /**
  * Project paragraph text may contain opaque EPUB markers between characters
  * that are visibly adjacent (for example a name split across styled spans).
@@ -67,7 +71,7 @@ export function validNameQuote(name: string, quote: string, source: string): boo
       const start = at + offset, end = start + name.length;
       const before = [...source.slice(0, start)].at(-1) ?? '';
       const after = [...source.slice(end)][0] ?? '';
-      const honorific = /^(?:君|様|殿|氏|先生|先輩|後輩|博士)(?=$|[\p{P}\p{Z}\p{Script=Hiragana}])/u.test(source.slice(end)) || nameTitleSuffix.test(source.slice(end));
+      const honorific = /^(?:君|様|殿|氏|先生|先輩|後輩|博士)(?=$|[\p{P}\p{Z}\p{Script=Hiragana}])/u.test(source.slice(end)) || nameTitleSuffix.test(source.slice(end)) || katakanaNameEnding.test(source.slice(end));
       const titleBefore = nameTitlePrefix.test(source.slice(0,start));
       if ((!word.test(before) || titleBefore) && (!word.test(after) || honorific)) return true;
     }

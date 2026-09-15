@@ -1,3 +1,4 @@
+import { quarantineInitialFields } from '../db/initialFieldTrust';
 import {scopedRegisters} from './registerContext';
 import {hasContextHeader,meaningfulContextWindow} from './contextWindow';
 import {originalRubyContext} from '../workflow/originalRubyContext';
@@ -40,6 +41,8 @@ export interface ContextPack {
 const j = (v: unknown): string => JSON.stringify(v, null, 0);
 
 export function buildContextPack(store: ProjectStore, input: ContextPackInput): ContextPack {
+  const firstId=input.paragraphIds[0];
+  if(firstId)quarantineInitialFields(store,store.projects.getSeriesIdOfParagraph(firstId));
   // Context assembly only reads source, knowledge and audit receipts. Share
   // transitive proof checks within this synchronous read, then release them;
   // every later context build still validates current sources and user edits.

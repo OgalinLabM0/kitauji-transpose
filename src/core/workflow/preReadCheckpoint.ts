@@ -3,10 +3,10 @@ import { preReadBackground, type PreReadInputReceipt } from '../db/narrativeSour
 import { createHash } from 'node:crypto';
 import type { ProjectStore } from '@core/db';
 import type { PreReadParagraph } from '@core/ai/protocol';
-import { preparationContract } from '@core/ai/preparationContract';
+import { preparationContract, compatiblePreparationContracts } from '@core/ai/preparationContract';
 
 const key = (chapterId: string) => `prep:preread-progress:${chapterId}`;
-const signature = (p: PreReadParagraph, chapterSource: string) => createHash('sha256').update(JSON.stringify([preparationContract('preread'), chapterSource, p.id, p.seriesOrdinal, p.sourceText])).digest('hex');
+const signature = (p: PreReadParagraph, chapterSource: string, contract = preparationContract('preread')) => createHash('sha256').update(JSON.stringify([contract, chapterSource, p.id, p.seriesOrdinal, p.sourceText])).digest('hex');
 
 /** Used only to resume an incomplete chapter. Explicit reruns of complete chapters start fresh. */
 export class PreReadCheckpoint {
@@ -45,7 +45,7 @@ export class PreReadCheckpoint {
         background = preReadBackground(this.store.db, seriesId, entry.input.before).signature;
         backgrounds.set(entry.input.before, background);
       }
-      return entry.signature === signature(p, this.chapterSource) && entry.input.background === background;
+      return compatiblePreparationContracts('preread').some(contract => entry.signature === signature(p, this.chapterSource, contract)) && entry.input.background === background;
     }));
   }
   /** Call inside the same transaction as knowledge writes. */

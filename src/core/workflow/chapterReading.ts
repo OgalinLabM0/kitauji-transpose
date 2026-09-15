@@ -8,6 +8,8 @@ import { CHAPTER_READING_PROMPT } from '../ai/prompts/chapterReadingPrompt';
 import { chapterRequest, splitChapterPair, type ChapterPassage } from './chapterReadingPlan';
 import { LONG_NATURALNESS_CONTRACT, LONG_READING_CHUNK_LIMIT, LONG_READING_MAX_CHUNKS } from './longNaturalnessPlan';
 import { PROMPT_VERSION } from '../ai/prompts/systemPrompts';
+import { systemPromptFor } from '../ai/prompts/systemPrompts';
+import { parseDispute } from './disputeReview';
 
 export const CHAPTER_READING_LIMIT = 16000;
 const workstation = 'chapter-reading-reviewer' as const;
@@ -25,18 +27,45 @@ const schema = z.object({
     evidence: z.array(z.object({ id: z.string(), jp: z.string().trim().min(1), zh: z.string().trim().min(1) }).strict()).min(1).max(2),
   }).strict()).max(12),
 }).strict();
-type Verdict = z.infer<typeof schema>;
+export type ChapterReadingVerdict = z.infer<typeof schema>;
+type Verdict = ChapterReadingVerdict;
 interface Receipt { contract: string; hash: string; aiCallId: string; verdict: Verdict; checkedAt: string }
+export const CHAPTER_DISPOSITION_INSTRUCTION = '独立核对相邻日文与当前中文。原作已有的重复、停顿、残句、含混、声线或节奏必须保留，不能仅因不流畅要求改写。retain仅用于具体原文和上下文证明当前表达应保留；revise须指出译文引入的具体问题与局部方向；证据不足返回uncertain。诊断不是事实。只引用当前目标source/translation，邻段用于语境核对。';
+export const CHAPTER_RECOVERY_CONTRACT = digest(['chapter-recovery-v1', contract, CHAPTER_DISPOSITION_INSTRUCTION, systemPromptFor('dispute-reviewer'), systemPromptFor('faithful-translator'), systemPromptFor('repair-resolution-reviewer')]);
+export type ChapterDisposition = { aiCallId: string; verdict: Extract<ReturnType<typeof parseDispute>, { ok: true }>['value'] };
+export const chapterDispositionTask = (window: ChapterReadingWindow, receipt: Receipt, index: number) => `chapter-disposition:${digest([CHAPTER_RECOVERY_CONTRACT, window.hash, receipt.aiCallId, receipt.verdict, index])}`;
+
+/** A dismissed display row is never evidence. Retention requires one current,
+ * independently checked, source-bound disposition for every original finding. */
+export function chapterReadingRetained(store: ProjectStore, window: ChapterReadingWindow, receipt: Receipt): boolean {
+  const saved = fromJson<{ contract?: string; hash?: string; receiptId?: string; checks?: ChapterDisposition[] } | null>(storedValue(store, `${window.key}:retained`), null);
+  if (!receipt.verdict.findings.length || !saved || saved.contract !== CHAPTER_RECOVERY_CONTRACT || saved.hash !== window.hash || saved.receiptId !== receipt.aiCallId || !Array.isArray(saved.checks) || saved.checks.length !== receipt.verdict.findings.length) return false;
+  return saved.checks.every((check, index) => {
+    const finding = receipt.verdict.findings[index]!, passage = window.items.find(p => p.id === finding.block_id)!;
+    const parsed = parseDispute(JSON.stringify(check?.verdict), passage.source, passage.translation);
+    return parsed.ok && parsed.value.decision === 'retain' && !!store.db.get("SELECT id FROM ai_calls WHERE id=? AND task_id=? AND workstation_id='dispute-reviewer' AND paragraph_id=? AND prompt_version=? AND finish_reason='stop' AND error IS NULL", [check.aiCallId, chapterDispositionTask(window, receipt, index), passage.id, PROMPT_VERSION]);
+  });
+}
+
+export function retainChapterReading(store: ProjectStore, window: ChapterReadingWindow, receipt: Receipt, checks: ChapterDisposition[]): void {
+  store.transaction(() => {
+    const paragraph = store.projects.getParagraph(window.items[0]!.id);
+    const volume = paragraph && store.db.get<{ volume_id: string }>('SELECT volume_id FROM chapters WHERE id=?', [paragraph.chapterId]);
+    if (!volume || !chapterReadingWindows(store, volume.volume_id).some(w => w.key === window.key && w.hash === window.hash) || JSON.stringify(chapterReadingReceipt(store, window)) !== JSON.stringify(receipt)) throw new Error('章级问题回执或原译文已变化，旧复核不采纳');
+    store.db.run('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', [`${window.key}:retained`, JSON.stringify({ contract: CHAPTER_RECOVERY_CONTRACT, hash: window.hash, receiptId: receipt.aiCallId, checks, checkedAt: nowIso() })]);
+    if (!chapterReadingRetained(store, window, receipt)) throw new Error('章级保留决定缺少完整当前复核证据');
+  });
+}
 
 /** Every paragraph and every adjacent seam is covered. Long pairs use full-source
  * Chinese chunks only when all complete chunk and edge requests fit the limit. */
-export function chapterReadingWindows(store: ProjectStore, volumeId: string, fingerprint = true): ChapterReadingWindow[] {
+export function chapterReadingWindows(store: ProjectStore, volumeId: string, fingerprint = true, overrides: ReadonlyMap<string, { id: string; final_text: string; ruby_annotations: string | null }> = new Map()): ChapterReadingWindow[] {
   const ids = store.projects.listParagraphIdsByVolume(volumeId);
   const finals = store.translations.finalsForParagraphs(ids);
   const chapters = new Map<string, Passage[]>();
   for (const id of ids) {
     const p = store.projects.getParagraph(id)!;
-    const final = finals.get(id);
+    const final = overrides.get(id) ?? finals.get(id);
     const items = chapters.get(p.chapterId) ?? [];
     items.push({ id, chapter: p.chapterId, source: p.sourceText, translation: final?.final_text ?? '', finalId: final?.id ?? null, ruby: final?.ruby_annotations ?? null, inputHash: fingerprint ? auditInput(store, id).inputHash : '' });
     chapters.set(p.chapterId, items);
@@ -103,7 +132,7 @@ export function chapterReadingStatus(store: ProjectStore, volumeId: string) {
     });
     const receipt = chapterReadingReceipt(store, { ...pending, items, hash: windowHash(pending.scope, items) });
     if (!receipt) stale.push(id);
-    else issues.push(...receipt.verdict.findings.map(f => f.block_id));
+    else if (!chapterReadingRetained(store, { ...pending, items, hash: windowHash(pending.scope, items) }, receipt)) issues.push(...receipt.verdict.findings.map(f => f.block_id));
   }
   return { missing, stale, issues: [...new Set(issues)], unsupported };
 }
@@ -128,7 +157,8 @@ export async function reviewChapterReading(store: ProjectStore, ai: AiClient, vo
     if (!window.supported) throw new Error(`章级连读窗口超出 ${CHAPTER_READING_LIMIT} 字符边界：${window.items.map(p => p.id).join('、')}；保留全文，需明确分段后重新核查，未覆盖窗口不会放行`);
     if (window.items.some(p => !p.finalId || !p.translation.trim())) throw new Error('章级连读需要完整当前译稿');
     if (!current()) throw new Error('章级连读原文、稿件、知识或章内顺序已变化，请显式重新核查');
-    if (chapterReadingReceipt(store, window)?.verdict.findings.length === 0) continue;
+    const existing = chapterReadingReceipt(store, window);
+    if (existing && (!existing.verdict.findings.length || chapterReadingRetained(store, window, existing))) continue;
     const baseReceipt = storedValue(store, window.key);
     const result = await ai.structured({ workstation, taskId: taskId(window), paragraphId: window.items[0]!.id, user: window.user, parseRetries: 1, ...(signal ? { signal } : {}) }, text => parseChapterReading(text, window));
     signal?.throwIfAborted();

@@ -49,7 +49,7 @@ export function LogsPage() {
           {(['all', 'warning', 'error'] as const).map(l => <button key={l} className={`chip${level === l ? ' on' : ''}`} onClick={() => setLevel(l)}>{{ all: '全部', warning: '警告+', error: '错误' }[l]}</button>)}
         </div>
         <select className="input" style={{ width: 140, height: 28, padding: '0 8px', fontSize: '0.9em' }} value={workstation} onChange={e => setWorkstation(e.target.value as WorkstationId | 'all')}>
-          <option value="all">全部工位</option>
+          <option value="all">全部步骤</option>
           {workstations.map(ws => <option key={ws} value={ws}>{WORKSTATION_LABELS[ws]}</option>)}
         </select>
         <input className="input" style={{ width: 180, height: 28, padding: '0 8px', fontSize: '0.9em' }} placeholder="搜索关键词..." value={search} onChange={e => setSearch(e.target.value)} />
@@ -57,7 +57,7 @@ export function LogsPage() {
         {logs.length > 0 && <button className="btn btn-secondary btn-sm" onClick={() => setClearOpen(true)} title="清空任务日志"><Trash2 size={13} /> 清空日志</button>}</div>
       <div className="page-body" ref={ref} style={{ padding: '8px 24px' }} onScroll={e => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight > 40 && follow) setFollow(false); }}>
         {shown.length === 0 && <p className="faint small">暂无日志</p>}
-        {shown.map(l => <div key={l.id} className={`log ${l.level}`}><span className="ts">{fmtTime(l.ts)}</span><span className="ws" title={l.workstationId ?? ''}>{l.workstationId ?? ''}</span><span className="msg">{l.message}</span><span className="faint">{l.tokens ? `${fmtTokens(l.tokens)} tok` : ''}{l.durationMs ? ` ${(l.durationMs / 1000).toFixed(1)}s` : ''}</span></div>)}
+        {shown.map(l => <div key={l.id} className={`log ${l.level}`}><span className="ts">{fmtTime(l.ts)}</span><span className="ws" title={l.workstationId ?? ''}>{l.workstationId ? WORKSTATION_LABELS[l.workstationId as WorkstationId] ?? l.workstationId : ''}</span><span className="msg">{/发送请求|收到响应/.test(l.message) ? <details><summary>{l.message.includes('发送请求') ? '已发送处理请求' : '已收到模型响应'} · 展开技术详情</summary><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{l.message}</pre></details> : l.message}</span><span className="faint">{l.tokens ? `${fmtTokens(l.tokens)} tok` : ''}{l.durationMs ? ` ${(l.durationMs / 1000).toFixed(1)}s` : ''}</span></div>)}
       </div>
       <div className="taskbar" style={{ borderTop: '1px solid var(--border-subtle)' }}>{usage && <>今日：{usage.calls} 次调用 · 输入 {fmtTokens(usage.inputTokens)} · 输出 {fmtTokens(usage.outputTokens)} token{usage.unknownUsageRequests ? ` · ${usage.unknownUsageRequests} 次用量未知` : ''}</>}</div>
       {clearOpen && <ConfirmDestructive title="清空任务日志" expected="清空日志" confirmLabel="清空日志" onClose={() => setClearOpen(false)} onConfirm={async () => {

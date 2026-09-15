@@ -84,8 +84,14 @@ export class KnowledgeRepo {
       return id;
     });
   }
-  private refreshCharacterSummary(id: string): void {
-    const row = characterAt(this.db, this.getCharacter(id)!, Number.MAX_SAFE_INTEGER);
+  refreshCharacterSummary(id: string): void {
+    const raw = this.getCharacter(id)!;
+    const row = characterAt(this.db, raw, Number.MAX_SAFE_INTEGER);
+    // Undated old mirrors are not trusted facts, but can be their only historical
+    // record. Keep them stored until a dated field actually replaces the mirror.
+    for(const field of ['gender','first_person_type','speech_register','voice_notes','plurality'] as const)if(!this.db.get('SELECT 1 FROM character_field_history WHERE character_id=? AND field=?',[id,field])) {
+      row[field]=raw[field];if(field==='gender'){row.gender_confidence=raw.gender_confidence;row.gender_evidence_ids=raw.gender_evidence_ids;}
+    }
     this.db.run('UPDATE characters SET gender=?,gender_confidence=?,gender_evidence_ids=?,first_person_type=?,speech_register=?,voice_notes=?,plurality=?,updated_at=? WHERE id=?', [row.gender,row.gender_confidence,row.gender_evidence_ids,row.first_person_type,row.speech_register,row.voice_notes,row.plurality,nowIso(),id]);
   }
   characterAt(row: CharacterRow, at: number): CharacterRow { return characterAt(this.db, row, at); }

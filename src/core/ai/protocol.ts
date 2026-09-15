@@ -247,6 +247,16 @@ export function parsePreRead(raw: string, paragraphs?: readonly PreReadParagraph
   if (idError) return { ok: false, error: idError };
   const byId = new Map(paragraphs.map(p => [p.id, p]));
   const invalid = (message: string): ProtocolResult<PreReadOutput> => ({ ok: false, error: { code: 'INVALID_SHAPE', message } });
+  // A field-level citation is already an explicit citation for this character.
+  // Complete the redundant parent index only from exact, local child evidence.
+  // Attribution is still reviewed separately; this establishes no new fact.
+  for (const c of result.value.characters) {
+    if (!c.evidence_ids.length || new Set(c.evidence_ids).size !== c.evidence_ids.length) continue;
+    for (const evidence of c.field_evidence) {
+      const paragraph = byId.get(evidence.paragraph_id);
+      if (paragraph && containsVisibleQuote(paragraph.sourceText, evidence.quote) && !c.evidence_ids.includes(evidence.paragraph_id)) c.evidence_ids.push(evidence.paragraph_id);
+    }
+  }
   const candidates = [...result.value.characters, ...result.value.relationship_events, ...result.value.plot_events, ...result.value.knowledge_change_candidates,
     ...result.value.characters.flatMap(c => c.quirk_candidates)];
   for (const c of candidates) {
@@ -260,6 +270,20 @@ export function parsePreRead(raw: string, paragraphs?: readonly PreReadParagraph
     }
   }
   for (const c of result.value.characters) {
+    // Weak models sometimes serialize a cited quotation as "ID: quote" in
+    // this string field. Unwrap only an explicitly cited ID whose own current
+    // paragraph contains the complete remainder. No fuzzy matching, new IDs,
+    // explanatory text or cross-paragraph evidence is accepted.
+    if (c.gender_evidence && !c.evidence_ids.some(id => containsVisibleQuote(byId.get(id)!.sourceText, c.gender_evidence))) {
+      for (const id of c.evidence_ids) {
+        const raw = c.gender_evidence.trim();
+        if (!raw.startsWith(id)) continue;
+        const suffix = raw.slice(id.length);
+        if (!/^\s*[:：]/u.test(suffix)) continue;
+        const quote = suffix.replace(/^\s*[:：]\s*/u, '').trim();
+        if (quote && containsVisibleQuote(byId.get(id)!.sourceText, quote)) { c.gender_evidence = quote; break; }
+      }
+    }
     // The persistence guard already discards unsupported gender guesses. Do
     // that before quote-position checks too: an absent optional fact must not
     // force regeneration of otherwise valid names and voice observations.
@@ -272,11 +296,20 @@ export function parsePreRead(raw: string, paragraphs?: readonly PreReadParagraph
     const nameSources = sources.map(source => visibleNameSource(source));
     if (c.name_evidence && (!c.evidence_ids.includes(c.name_evidence.paragraph_id) || !validNameQuote(c.name_jp, c.name_evidence.quote, byId.get(c.name_evidence.paragraph_id)?.sourceText ?? ''))) {
       const known = knownNames.includes(c.name_jp);
+      // An existing identity needs no new main-name receipt in every batch.
+      // Discard only this optional receipt when its quote really exists in the
+      // cited source. Current mentions and all other factual evidence are still
+      // checked below; foreign IDs and fabricated quotations remain errors.
+      if (known && c.evidence_ids.includes(c.name_evidence.paragraph_id)
+        && containsVisibleQuote(byId.get(c.name_evidence.paragraph_id)?.sourceText ?? '', c.name_evidence.quote)) {
+        delete c.name_evidence;
+      } else {
       const positions = known ? [] : paragraphs.filter(p => validNameQuote(c.name_jp, p.sourceText, p.sourceText)).slice(0, 3).map(p => p.id);
       const hint = positions.length ? `本次存在独立词形的段落ID：${JSON.stringify(positions)}。回查这些段落；只有确实指此人物时才从其中逐字引用，并把所选ID加入evidence_ids，保留其他字段的证据位置。这些位置不证明人物身份，不能裁掉被拒引句的相邻原字。` : '';
       return invalid(`人物「${c.name_jp}」的姓名证据须逐字引用本次人物证据段中的独立主名，不得使用词内字或别名代替。${known ? '该名字已在known_names中，已有前文姓名依据；本次无法提供独立主名引句时，省略整个name_evidence字段（不是改写引文或写null），保留name_jp和本次有效evidence_ids。其他字段仍各自提供本次证据；不要反复提交同一条被拒引句。' : `此名字不在known_names中，不能借已有身份解释引句；不要裁掉相邻原字来伪造独立姓名。${hint}`}`);
+      }
     }
-    if (!c.name_jp.trim() || ![c.name_jp, ...c.aliases].some(name => name.trim() && nameSources.some(text => text.includes(name)))) return invalid('人物名字或别名未出现在所引证据中');
+    if (!c.name_jp.trim() || !([c.name_jp, ...c.aliases].some(name => name.trim() && nameSources.some(text => text.includes(name))))) return invalid('人物名字或别名未出现在所引证据中');
     if (c.gender_evidence && !sources.some(text => containsVisibleQuote(text, c.gender_evidence))) {
       const literalIds = paragraphs.filter(p => containsVisibleQuote(p.sourceText, c.gender_evidence)).map(p => p.id);
       return invalid(`人物「${c.name_jp}」的gender_evidence：性别证据必须逐字引用所列段落，不能编造证据。${JSON.stringify({ cited_ids: c.evidence_ids, literal_quote_ids: literalIds.slice(0, 12) })}。literal_quote_ids只说明引文位置，不证明引文说的是该人物。确认属于该人物后，将正确位置补入evidence_ids并保留姓名和其他字段的证据位置；无法确认时gender=unknown、gender_evidence=""。此字段只放原文引句，不加段落ID、冒号或说明。`);
@@ -292,7 +325,12 @@ export function parsePreRead(raw: string, paragraphs?: readonly PreReadParagraph
   const names = result.value.characters.map(c => c.name_jp);
   if (new Set(names).size !== names.length) return invalid('同一人物在本次结果中重复');
   const availableNames = new Set([...knownNames, ...names]);
-  if (result.value.relationship_events.some(e => e.from_name_jp === e.to_name_jp || !availableNames.has(e.from_name_jp) || !availableNames.has(e.to_name_jp)) || result.value.plot_events.some(e => e.character_names.some(name => !availableNames.has(name)))) return invalid('事件涉及未建档人物，请补人物候选或使用已知标准名');
+  for (const e of result.value.relationship_events) {
+    if (e.from_name_jp === e.to_name_jp) return invalid(`关系两端都为「${e.from_name_jp}」，不能建立人物对自己的关系。原文明示的个人行为改放plot_events，保留description_jp中的事实和原证据，不猜另一个人物。`);
+    const missing = [e.from_name_jp,e.to_name_jp].filter(n => !availableNames.has(n));
+    if (missing.length) return invalid(`关系「${e.from_name_jp}→${e.to_name_jp}」无法绑定：${missing.join('、')}未建档且未在所引原文中定位。不要补人物档案或猜名字；把原文确有的事实写入plot_events.summary_jp，用原文的称呼或代词，保留正确证据，character_names仅填known_names中的姓名。`);
+  }
+  if (result.value.plot_events.some(e => e.character_names.some(name => !availableNames.has(name)))) return invalid('事件涉及未建档人物，character_names只使用已知标准名；无法绑定可为空，摘要与证据保留');
   if (result.value.plot_events.some(e => !e.summary_jp.trim()) || result.value.relationship_events.some(e => !e.description_jp.trim())) return invalid('事件摘要与关系描述不能为空');
   return result;
 }

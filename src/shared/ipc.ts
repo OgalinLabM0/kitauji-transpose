@@ -42,6 +42,7 @@ export interface SeriesRunState {
   usage: Pick<RunUsage, 'inputTokens' | 'outputTokens' | 'unknownUsageRequests'>;
 }
 export interface VolumeRunState {
+  detail?: import('./types').WorkflowStepProgress | null;
   usage?: RunUsage; requestLimit?: number; stopReason?: string | null;
   volumeId: string; status: 'running' | 'stopped' | 'attention' | 'done';
   phase: 'preread' | 'terms' | 'scenes' | 'honorifics' | 'knowledge' | 'translate' | 'trajectory' | 'delivery';
@@ -112,6 +113,7 @@ export interface Api {
     listVolumes(seriesId: string): Promise<VolumeSummary[]>;
     listChapters(volumeId: string): Promise<ChapterSummary[]>;
     rebuildEpubChapters(volumeId:string):Promise<EpubChapterRebuildResult>;
+    referenceTranslations(volumeId: string): Promise<Record<string, string>>;
     listParagraphs(chapterId: string): Promise<ParagraphView[]>;
     listParagraphsByVolume(volumeId: string): Promise<ParagraphView[]>;
     getParagraph(id: string): Promise<ParagraphView | null>;

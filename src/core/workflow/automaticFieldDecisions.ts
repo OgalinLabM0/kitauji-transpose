@@ -53,6 +53,9 @@ export function adoptAutomaticFields(store: ProjectStore, seriesId: string, thro
     if ([...c.previousEvidenceIds,...c.evidenceIds].some(id => { const a = store.projects.currentAnalysis(id); return a?.speaker_char_id && a.speaker_char_id !== row.id; })) return;
     // Keep model provenance: automatic adoption must not lock this field as if a human chose it.
     store.knowledge.observeCharacter({seriesId,introducedVolume:row.introduced_volume,nameJp:row.canonical_name_jp,firstPersonType:String(c.proposed)},c.evidenceIds,{first_person_type:c.evidenceIds},{first_person_type:c.quotes},c.sourceIds ?? c.evidenceIds,c.eventIds ?? []);
+    // The just-written model row remains isolated until this already-validated
+    // decision is persisted. Update its mirror inside this same atomic decision.
+    store.db.run('UPDATE characters SET first_person_type=?,updated_at=? WHERE id=?',[String(c.proposed),nowIso(),row.id]);
     const decision: AutomaticDecision = {action:'adopt-stage',createdAt:nowIso(),afterSnapshot:fieldSnapshot(store,row.id,c.field),aiCallId,before:c.before,proposed:c.proposed,sources:c.sources,reason:review.reason};
     store.translations.updateQueuePayload(item.id,{...item.payload,automaticDecision:decision});
     store.translations.resolveQueueItem(item.id,JSON.stringify({action:'automatic-evidenced-stage',aiCallId,policy:'explicit-first-person-v1'}));

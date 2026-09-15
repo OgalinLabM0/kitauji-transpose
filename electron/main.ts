@@ -6,6 +6,12 @@ import { prepareDataPaths } from './dataPaths';
 import { readDataLocation, finishDataMove } from './dataLocation';
 
 const here = dirname(fileURLToPath(import.meta.url));
+// Test-only hidden window: requires an isolated data directory as well as the flag.
+const backgroundTest = !!process.env.V3_TEST_USERDATA && process.env.V3_TEST_BACKGROUND === '1';
+function reportError(title: string, message: string): void {
+  if (backgroundTest) console.error(`${title}: ${message}`);
+  else dialog.showErrorBox(title, message);
+}
 let win: BrowserWindow | null = null;
 let service: AppService | null = null;
 
@@ -15,10 +21,10 @@ function createWindow(): void {
     title: '北宇治译奏部',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1b1a19' : '#f6f3ee',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    webPreferences: { preload: join(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
+    webPreferences: { preload: join(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, backgroundThrottling: !backgroundTest },
     show: false,
   });
-  win.once('ready-to-show', () => win?.show());
+  win.once('ready-to-show', () => { if (!backgroundTest) win?.show(); });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   const dev = process.env.VITE_DEV_SERVER_URL;
   if (dev) { void win.loadURL(dev); }
@@ -37,7 +43,7 @@ function configureStorage(data: string): void {
 try {
   configureStorage(process.env.V3_TEST_USERDATA || readDataLocation(locationRoot).current);
 } catch (error) {
-  dialog.showErrorBox('数据目录不可用', (error as Error).message);
+  reportError('数据目录不可用', (error as Error).message);
   app.exit(1);
 }
 if (process.env.V3_DISABLE_GPU === '1') app.commandLine.appendSwitch('disable-gpu');
@@ -48,7 +54,7 @@ if (process.env.V3_DISABLE_GPU === '1') app.commandLine.appendSwitch('disable-gp
 let ownsInstance = app.requestSingleInstanceLock();
 if (!ownsInstance) app.quit();
 else app.on('second-instance', () => {
-  if (!win) return;
+  if (!win || backgroundTest) return;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
@@ -64,7 +70,7 @@ if (ownsInstance && !process.env.V3_TEST_USERDATA) {
       if (!ownsInstance) app.quit();
     }
   }
-  catch (error) { dialog.showErrorBox('数据迁移', (error as Error).message); }
+  catch (error) { reportError('数据迁移', (error as Error).message); }
 }
 
 if (ownsInstance) app.whenReady().then(() => {
@@ -72,14 +78,14 @@ if (ownsInstance) app.whenReady().then(() => {
     Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }]) : null);
     service = new AppService(() => win);
     const settingsWarning = service.settings.recoveryWarning;
-    if (settingsWarning) dialog.showErrorBox('接口设置需要处理', settingsWarning);
+    if (settingsWarning) reportError('接口设置需要处理', settingsWarning);
     service.register();
     createWindow();
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   } catch (e) {
     const message = `应用启动失败：${(e as Error).message}`;
     console.error(message, e);
-    dialog.showErrorBox('北宇治译奏部', message);
+    reportError('北宇治译奏部', message);
     app.quit();
   }
 });
@@ -92,6 +98,6 @@ app.on('before-quit', (event) => {
   quitting = true;
   void service.dispose().then(() => { service = null; app.quit(); }).catch((error) => {
     quitting = false;
-    dialog.showErrorBox('退出失败', `后台任务未能安全结束：${(error as Error).message}`);
+    reportError('退出失败', `后台任务未能安全结束：${(error as Error).message}`);
   });
 });

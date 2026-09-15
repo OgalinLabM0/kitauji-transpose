@@ -2,7 +2,7 @@ import { identityDependenciesCurrent, readIdentityProof, currentIdentityDependen
 import type { IdentityDependency } from './identitySources';
 import { createHash } from 'node:crypto';
 import { Db, fromJson } from './database';
-import { preparationContract } from '../ai/preparationContract';
+import { preparationContract, preparationContractAccepted } from '../ai/preparationContract';
 import { eventSourceFingerprint, narrativeSourceCurrent } from './narrativeSources';
 
 interface Proof { ids: string[]; signature: string; contract: string; events: { id: string; fingerprint: string }[]; identities: IdentityDependency[] }
@@ -29,7 +29,7 @@ export function originalSourceProof(db: Db, seriesId: string, ids: string[], eve
 }
 export function characterSourceCurrent(db: Db, raw: string | null | undefined): boolean {
   const proof = fromJson<Proof | null>(raw, null);
-  if (!proof || !Array.isArray(proof.ids) || !proof.ids.length || !proof.ids.every(id => typeof id === 'string') || proof.contract !== preparationContract('preread')) return false;
+  if (!proof || !Array.isArray(proof.ids) || !proof.ids.length || !proof.ids.every(id => typeof id === 'string') || !preparationContractAccepted('preread', proof.contract)) return false;
   if (!Array.isArray(proof.events) || !proof.events.every(e => e && typeof e.id === 'string' && typeof e.fingerprint === 'string')) return false;
   const memo = new Map<string, boolean>();
   return readIdentityProof(db, `character:${raw}`, () => {

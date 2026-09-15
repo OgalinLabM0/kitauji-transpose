@@ -1,3 +1,4 @@
+import { quarantineInitialFields } from '../db/initialFieldTrust';
 import { loadTermExtractionCheckpoint, saveTermExtractionCheckpoint } from './termExtractionCheckpoint';
 import { termProposalContext } from './termProposalContext';
 import { sceneNameCandidates, sceneNameCandidateSourceIds } from './sceneNameCandidates';
@@ -39,7 +40,7 @@ export class PrepRunner {
   readonly progress: WorkflowProgress = { running: false, paused: false, phase: 'idle', done: 0, total: 0, currentParagraphId: null, costUsd: 0, inputTokens: 0, outputTokens: 0, message: '' };
   constructor(private readonly store: ProjectStore, private readonly ai: AiClient, private readonly opts: PrepOptions = {}) {}
   private emit(patch: Partial<WorkflowProgress>): void {
-    Object.assign(this.progress, patch, { costUsd: this.ai.totals.costUsd, inputTokens: this.ai.totals.inputTokens, outputTokens: this.ai.totals.outputTokens });
+    Object.assign(this.progress, patch.phase && patch.phase !== this.progress.phase && patch.phase !== 'idle' ? { detail: null } : {}, patch, { costUsd: this.ai.totals.costUsd, inputTokens: this.ai.totals.inputTokens, outputTokens: this.ai.totals.outputTokens });
     this.opts.onProgress?.({ ...this.progress });
   }
   private check(): void { if (this.opts.signal?.aborted) throw new ProviderError('abort', '已取消'); }
@@ -56,10 +57,11 @@ export class PrepRunner {
   /** 按章节顺序预读一册；每章一次调用（超长章按字数切分），把人物/关系/事件写为候选。 */
   async preRead(volumeId: string, chapterIds?: string[]): Promise<{ characters: number; relationships: number; events: number; changes: number; merged: number; quirks: number }> {
     const seriesId = this.store.projects.getVolumeSeriesId(volumeId);
+    quarantineInitialFields(this.store,seriesId);
     const volNo = this.volumeNumberOf(volumeId);
     const chapters = this.store.projects.listChapters(volumeId).filter(c => !chapterIds || chapterIds.includes(c.id));
     const stats = { characters: 0, relationships: 0, events: 0, changes: 0, merged: 0, quirks: 0 };
-    this.emit({ running: true, phase: '全书预读', done: 0, total: chapters.length, message: `预读 ${chapters.length} 章` });
+    this.emit({ detail: null, running: true, phase: '全书预读', done: 0, total: chapters.length, message: `预读 ${chapters.length} 章` });
     const failedChapters: string[] = [];
     try {
       for (const ch of chapters) {
@@ -73,7 +75,8 @@ export class PrepRunner {
         // 块失败 → 二分拆块重试到单段；任一单段仍失败则本章不标完成（重跑只补这些章）
         let chapterOk = true;
         let processedParagraphs = 0;
-        this.emit({ message: `预读「${chapterLabel}」：开始，已核对 0/${paras.length} 段` });
+        const detail = (label = '预读本章') => ({ phase: 'preread', label, done: processedParagraphs, total: paras.length, unit: '段' as const, chapterTitle: chapterLabel });
+        this.emit({ detail: detail(), message: `预读「${chapterLabel}」：开始，已核对 0/${paras.length} 段` });
         const work: typeof paras[] = chunkByChars(paras, Math.min(this.opts.chapterBatchChars ?? 3000, 3000), 32);
         while (work.length) {
           const remaining = work.shift()!;
@@ -84,7 +87,7 @@ export class PrepRunner {
           if (leading) {
             processedParagraphs += leading;
             remaining.splice(0, leading);
-            this.emit({ message: `预读「${chapterLabel}」：已核对 ${processedParagraphs}/${paras.length} 段` });
+            this.emit({ detail: detail(), message: `预读「${chapterLabel}」：已核对 ${processedParagraphs}/${paras.length} 段` });
           }
           if (!remaining.length) continue;
           const boundary = done.slice(leading).findIndex(Boolean);
@@ -115,10 +118,10 @@ export class PrepRunner {
           })) throw new Error('预读原文或段落位置在调用期间已变化，旧结果未写入，请继续本册重新核对');
           };
           let out: PreReadOutput;
-          try { out = await splitPreRead(this.ai, user, batch, knownNames, checkBatch, this.opts.signal); }
+          try { out = await splitPreRead(this.ai, user, batch, knownNames, checkBatch, this.opts.signal, label => this.emit({ detail: detail(label), message: `${label} · ${chapterLabel} · 已核对 ${processedParagraphs}/${paras.length} 段` })); }
           catch (e) {
-            if (!(e instanceof AiCallFailed)) throw e;
-            if (batch.length > 1) { const mid = Math.ceil(batch.length / 2); work.unshift(batch.slice(0, mid), batch.slice(mid)); this.store.translations.log({ level: 'warning', workstationId: 'book-pre-reader', paragraphId: batch[0]!.id, message: `预读块失败（${batch.length} 段）：${e.message}；拆成两半重试` }); this.emit({ message: `「${ch.title ?? ch.chapterNumber}」一块失败，拆半重试…` }); continue; }
+            if (!(e instanceof AiCallFailed) || e.lastError instanceof ProviderError && !['shape','truncated'].includes(e.lastError.kind)) throw e;
+            if (batch.length > 1) { const mid = Math.ceil(batch.length / 2); work.unshift(batch.slice(0, mid), batch.slice(mid)); this.store.translations.log({ level: 'warning', workstationId: 'book-pre-reader', paragraphId: batch[0]!.id, message: `预读块失败（${batch.length} 段）：${e.message}；拆成两半重试` }); this.emit({ detail: detail('自动缩小批次重试'), message: `正在自动缩小处理范围（${batch.length} → ${mid} 段），已完成部分保留，无需操作` }); continue; }
             chapterOk = false; this.store.translations.log({ level: 'error', workstationId: 'book-pre-reader', paragraphId: batch[0]!.id, message: `预读失败（单段 §${batch[0]!.seriesOrdinal}）：${e.message}` }); continue;
           }
           this.check();
@@ -239,7 +242,7 @@ export class PrepRunner {
             checkpoint.save(batch, { before: batch[0]!.seriesOrdinal, background: background.signature, identity: identityInput });
           }));
           processedParagraphs += batch.length;
-          this.emit({ message: `预读「${chapterLabel}」：已核对 ${processedParagraphs}/${paras.length} 段` });
+          this.emit({ detail: detail(), message: `预读「${chapterLabel}」：已核对 ${processedParagraphs}/${paras.length} 段` });
         }
         if (chapterOk) this.store.projects.markPrepDone('preread', ch.id, chapterSource); else failedChapters.push(ch.title ?? `第${ch.chapterNumber}章`);
         this.emit({ done: this.progress.done + 1, message: `预读${chapterOk ? '完成' : '部分失败'}：${ch.title ?? ch.chapterNumber}` });
@@ -284,7 +287,7 @@ export class PrepRunner {
             let extracted = cached?.value;
             if (!extracted) {
               let successfulRaw = '';
-              const r = await this.ai.structured({ workstation: 'term-extractor', user, paragraphId: batch[0]!.id, ...(this.opts.signal ? { signal: this.opts.signal } : {}) }, text => {
+              const r = await this.ai.structured({ workstation: 'term-extractor', parseRetries: batch.length > 1 ? 0 : 2, user, paragraphId: batch[0]!.id, ...(this.opts.signal ? { signal: this.opts.signal } : {}) }, text => {
                 const parsed = parseTermExtract(text, batch);
                 if (parsed.ok) successfulRaw = text;
                 return parsed;
@@ -301,9 +304,9 @@ export class PrepRunner {
               agg.set(t.term_jp, a);
             }
             processedParagraphs += batch.length;
-            this.emit({ message: `术语：${ch.title ?? ch.chapterNumber}，已核对 ${processedParagraphs}/${paras.length} 段` });
+            this.emit({ detail: { phase: 'terms', label: '术语提取', done: processedParagraphs, total: paras.length, unit: '段', chapterTitle: ch.title ?? `第${ch.chapterNumber}章` }, message: `术语：${ch.title ?? ch.chapterNumber}，已核对 ${processedParagraphs}/${paras.length} 段` });
           } catch (e) {
-            if (!(e instanceof AiCallFailed)) throw e;
+            if (!(e instanceof AiCallFailed) || e.lastError instanceof ProviderError && !['shape','truncated'].includes(e.lastError.kind)) throw e;
             if (batch.length > 1) { const mid = Math.ceil(batch.length / 2); work.unshift(batch.slice(0, mid), batch.slice(mid)); this.store.translations.log({ level: 'warning', workstationId: 'term-extractor', paragraphId: batch[0]!.id, message: `术语提取块失败（${batch.length} 段）：${e.message}；拆成两半重试` }); continue; }
             chapterOk = false; this.store.translations.log({ level: 'error', workstationId: 'term-extractor', paragraphId: batch[0]!.id, message: `术语提取失败（单段 §${batch[0]!.seriesOrdinal}）：${e.message}` });
           }
@@ -338,7 +341,7 @@ export class PrepRunner {
       // 译名提案：对所有无译名的 suggested 术语分批
       const pending = missingTermProposals(this.store, volumeId);
       let completedProposals = 0;
-      this.emit({ phase: '术语译名提案', message: `术语译名提案：已完成 ${completedProposals}/${pending.length} 项` });
+      this.emit({ phase: '术语译名提案', detail: { phase: 'terms', label: '准备候选译名', done: completedProposals, total: pending.length, unit: '项' }, message: `术语译名提案：已完成 ${completedProposals}/${pending.length} 项` });
       for (let i = 0; i < pending.length; i += 3) {
         this.check();
         const batch = pending.slice(i, i + 3);
@@ -369,7 +372,7 @@ export class PrepRunner {
             stats.proposed++;
           }
           completedProposals += batch.length;
-          this.emit({ message: `术语译名提案：已完成 ${completedProposals}/${pending.length} 项` });
+          this.emit({ detail: { phase: 'terms', label: '准备候选译名', done: completedProposals, total: pending.length, unit: '项' }, message: `术语译名提案：已完成 ${completedProposals}/${pending.length} 项` });
         } catch (e) { if (e instanceof AiCallFailed) this.store.translations.log({ level: 'error', workstationId: 'term-translation-proposer', message: `译名提案失败：${e.message}` }); else throw e; }
       }
       const proposalsRemaining = missingTermProposals(this.store, volumeId).length;
@@ -400,7 +403,7 @@ export class PrepRunner {
       const chars = JSON.stringify(nameChoices);
       const user = `${pack.text}\n\n【各段可选姓名 ID】这些只是该段当时可知的姓名，不证明在场或说话人；单字可能是普通词，须用原文判断。仅使用对应paragraph_id的candidates，不能借用其他段的候选。名字字段用日文原名。${chars || '（无）'}\n\n【本次任务块】（id 必须原样、完整返回；speaker_char_id 只能用上面的 ID 或 null）\n${JSON.stringify({ items: batch.map(p => ({ id: p.id, type: p.paragraphType, source: p.sourceText })) })}`;
       try {
-        const r = await this.ai.structured({ workstation: 'scene-analyst', user, paragraphId: ids[0]!, ...(this.opts.signal ? { signal: this.opts.signal } : {}) }, text => parseScene(text, ids));
+        const r = await this.ai.structured({ workstation: 'scene-analyst', parseRetries: batch.length > 1 ? 0 : 2, user, paragraphId: ids[0]!, ...(this.opts.signal ? { signal: this.opts.signal } : {}) }, text => parseScene(text, ids));
         this.check();
         if (batch.some(p => {
           const live = this.store.projects.getParagraph(p.id);
@@ -434,7 +437,7 @@ export class PrepRunner {
         n += r.value.paragraphs.length;
         this.emit({ done: this.progress.done + batch.length, currentParagraphId: ids[ids.length - 1]!, message: `${label} 完成，已分析 ${n}/${paras.length} 段` });
       } catch (e) {
-        if (!(e instanceof AiCallFailed)) throw e;
+        if (!(e instanceof AiCallFailed) || e.lastError instanceof ProviderError && !['shape', 'truncated'].includes(e.lastError.kind)) throw e;
         if (batch.length > 1) {
           this.store.translations.log({ level: 'warning', workstationId: 'scene-analyst', paragraphId: ids[0]!, message: `场景分析块失败（${batch.length} 段）：${e.message}；拆成两半重试` });
           const mid = Math.ceil(batch.length / 2);

@@ -46,7 +46,7 @@ export function ConfirmDestructive({ title, expected, onConfirm, onClose, childr
 
 export function Toasts() {
   const toasts = useApp(s => s.toasts); const dismiss = useApp(s => s.dismissToast);
-  return <div className="toasts">{toasts.map(t => <div key={t.id} className={`toast ${t.kind}`} onClick={() => dismiss(t.id)}>{t.text}</div>)}</div>;
+  return <div className="toasts">{toasts.map(t => <div key={t.id} className={`toast ${t.kind}`} role="status">{t.text}<button className="icon-btn" style={{ pointerEvents: 'auto', marginLeft: 8 }} onClick={() => dismiss(t.id)} aria-label="关闭提示" title="关闭提示"><X size={13}/></button></div>)}</div>;
 }
 
 /** 阅读视图只显示正文；排版标记仍保留在原始文本、编辑器和导出数据中。 */

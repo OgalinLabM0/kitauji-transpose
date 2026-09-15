@@ -1,6 +1,6 @@
 import type {ProjectStore,CharacterRow} from '@core/db';
 import {fromJson} from '@core/db';
-import {characterFactCurrent,type CharacterFact} from '../db/characterHistory';
+import {characterFactCurrent,characterFactFrom,type CharacterFact} from '../db/characterHistory';
 
 type LocalVoice={paragraphId:string;characterId:string;name:string;note:string};
 /** Context scope only. A verified source does not establish a lasting character trait. */
@@ -9,9 +9,9 @@ export function scopedBaseVoices(store:ProjectStore,characters:CharacterRow[],pa
   for(const character of characters) {
     // Whole-profile locks, name origins and undated legacy summaries do not prove
     // that this particular voice field was confirmed by the user.
-    const facts=store.db.all<CharacterFact>("SELECT field,value_json,valid_from_para,origin,evidence_ids,source_proof FROM character_field_history WHERE character_id=? AND field='voice_notes' AND origin IN ('user','model') ORDER BY valid_from_para DESC",[character.id]);
+    const facts=store.db.all<CharacterFact>("SELECT character_id,field,value_json,valid_from_para,origin,evidence_ids,source_proof FROM character_field_history WHERE character_id=? AND field='voice_notes' AND origin IN ('user','model') ORDER BY valid_from_para DESC",[character.id]);
     const select=(position:number)=>{
-      const current=facts.filter(f=>f.valid_from_para<=position && characterFactCurrent(store.db,f));
+      const current=facts.filter(f=>characterFactFrom(store.db,f)<=position && characterFactCurrent(store.db,f,character.id,'local'));
       return current.find(f=>f.origin==='user')??current.find(f=>f.origin==='model');
     };
     for(const paragraph of paragraphs) {

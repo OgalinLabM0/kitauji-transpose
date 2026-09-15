@@ -88,6 +88,7 @@ export function PersistentImportDialog({ initial, series, onClose, onImported }:
   </>}>
     <p role="status" aria-live="polite">{message}</p>
     {JSON.stringify(target) !== JSON.stringify(queue.target) && <p role="status">目标设置尚未保存。体检、导入或“保存清单并关闭”会先保存；保存失败时窗口和输入会保留。</p>}
+    <details style={{ marginBottom: 12 }}><summary>双语 EPUB 的格式要求</summary><p className="small">支持逐段中日交替（中文在前或日文在前，同一正文文件顺序一致）的双语 EPUB：两段为相邻的 p 元素，日文带行内 style=opacity:0.4;。已有中文自动保留供对照，不发送给模型。整章分语种、表格对照、仅靠外部 CSS 区分暂不支持，请先转换格式。</p></details>
     <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
       <div className="field"><label>未完成文件归入系列</label><select className="input" value={target.seriesId ?? 'new'} onChange={e => {
         const found = series.find(s => s.id === e.target.value);

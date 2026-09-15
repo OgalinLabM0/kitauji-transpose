@@ -15,6 +15,10 @@ export async function inspectImport(store: ProjectStore, name: string, data: Uin
     const result = /\.epub$/i.test(name) ? await importEpub(temporary, name, data, signal ? { signal } : {}) : importTxt(temporary, name, data, signal ? { signal } : {});
     signal?.throwIfAborted();
     const warnings: string[] = [];
+    const referenceCount = Object.keys(temporary.archives.referenceTranslations(result.volumeId)).length;
+    if (referenceCount) warnings.push(`已识别双语：${referenceCount}段已有译文仅供用户对照；模型只接收日文，旧译文不计入进度、不混入成品。`);
+    const appendixCount=temporary.db.get<{n:number}>("SELECT COUNT(DISTINCT spine_item_id) n FROM epub_text_blocks WHERE block_type='bilingual-appendix'")?.n??0;
+    if(appendixCount)warnings.push(`另有${appendixCount}页未配对附页，仅原样保留，不发送给模型；请核对其中是否包含需要翻译的正文。`);
     if (result.unparseable.length) warnings.push(`无法解析、将原样保留：${result.unparseable.join('、')}`);
     if (result.missingTocResources.length) warnings.push(`原文件缺少目录指向的内容：${result.missingTocResources.join('、')}`);
     if (result.tocMapped < result.tocTotal) warnings.push(`目录 ${result.tocTotal - result.tocMapped} 项未映射到正文标题。`);

@@ -2,9 +2,8 @@ import { useEffect } from 'react';
 import { DraftIdentityBoundary } from './components/DraftIdentityBoundary';
 import { DraftRecovery } from './components/DraftRecovery';
 import { DeliveryOutcome } from './components/DeliveryOutcome';
-import { useApp, tryApi, type Page } from './store/app';
-import { api } from './api';
-import { Toasts, Progress, fmtTokens } from './components/ui';
+import { useApp, type Page } from './store/app';
+import { Toasts, fmtTokens } from './components/ui';
 import { ShelfPage } from './features/shelf/ShelfPage';
 import { WorkbenchPage } from './features/workbench/WorkbenchPage';
 import { GlossaryPage } from './features/glossary/GlossaryPage';
@@ -28,7 +27,6 @@ const NAV: { id: Page; label: string; needSeries?: boolean; icon: typeof Library
 export function App() { return <DraftIdentityBoundary><AppContent /></DraftIdentityBoundary>; }
 function AppContent() {
   const { page, setPage, series, currentSeriesId, currentVolumeId, selectSeries, selectVolume, queueCount, progress, provider, toast } = useApp();
-  const canPause = progress.phase === '翻译' || progress.phase === '决定后重译' || progress.phase === '回查重译';
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.ctrlKey && e.key === ',') { e.preventDefault(); setPage('settings'); }
@@ -40,7 +38,7 @@ function AppContent() {
   return (
     <div className="app">
       <nav className="nav">
-        <div className="nav-brand"><span className="brand-mark"><Feather size={14} /></span><div>北宇治译奏部<small>KitaUji Transpose · 0.0.1</small></div></div>
+        <div className="nav-brand"><span className="brand-mark"><Feather size={14} /></span><div>北宇治译奏部<small>KitaUji Transpose · 0.0.2</small></div></div>
         {cur && (
           <div className="nav-context">
             <div className="title" title={cur.title}>{cur.title}</div>
@@ -87,17 +85,11 @@ function AppContent() {
           {progress.running ? (
             <>
               <span className="spinner" />
-              <span className="taskbar-phase">{progress.phase === '全作品 · 已检查册数' || progress.phase === '保存成品' ? '' : '当前步骤 · '}{progress.phase}</span>
-              <Progress value={progress.done} max={progress.total} />
-              <span>{progress.done}/{progress.total}</span>
-              <span className="ellipsis grow">{progress.message}</span>
+              <span className="grow">{progress.paused ? '任务已暂停，进度保留' : '任务在后台处理，可继续阅读'}</span>
               <span>输入 {fmtTokens(progress.inputTokens)} · 输出 {fmtTokens(progress.outputTokens)} token{progress.unknownUsageRequests ? ` · ${progress.unknownUsageRequests} 次用量未知` : ''}</span>
-              {canPause && (progress.paused
-                ? <button className="btn btn-text btn-sm" onClick={() => tryApi(() => api.workflow.resume())}>继续</button>
-                : <button className="btn btn-text btn-sm" onClick={() => tryApi(() => api.workflow.pause())}>暂停</button>)}
-              <button className="btn btn-text btn-sm" onClick={() => tryApi(() => api.workflow.cancel())}>停止</button>
             </>
-          ) : <span className="ellipsis grow">{progress.message || '稿件会自动保存到本机'}</span>}
+          ) : <span className="grow">稿件与处理进度保存在本机</span>}
+          <button className="btn btn-text btn-sm" onClick={() => useApp.getState().setPage('logs')}>查看日志</button>
           <DraftRecovery />
         </div>
       </div>

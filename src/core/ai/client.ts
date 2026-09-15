@@ -1,3 +1,4 @@
+import { INITIAL_OWNERSHIP_PROMPT, INITIAL_SUPPORT_PROMPT } from './prompts/initialFieldPrompt';
 import { requestIdentity, redactCredential } from './requestIdentity';
 import {translationThinking,TRANSLATION_THINKING_POLICY} from './translationThinking';
 import { RunGuard } from './runGuard';
@@ -24,6 +25,7 @@ import type { ProtocolResult, ProtocolError } from './protocol';
 import { Semaphore, abortableDelay } from './semaphore';
 
 export interface CallOptions {
+  initialFieldAttribution?: 'ownership'|'support';
   sourceStyle?: boolean;
   inlineStage?: 'body'|'body-focus'|'layout'|'layout-segments'|'layout-anchors'|'punctuation-choice';
   /** Isolated short contract for semantic term filtering, not initial extraction. */
@@ -90,7 +92,8 @@ export class AiClient {
     if(opts.inlineStage&&((!['faithful-translator','chinese-editor'].includes(opts.workstation)&&!(opts.workstation==='source-aligner'&&opts.inlineStage==='punctuation-choice'))||opts.termSelection||opts.voiceEvidence||opts.fieldAttribution||opts.registerEvidence))throw new Error('正文版式分离只能独立用于初译或编辑工位；对齐工位仅可选择程序生成的停顿候选');
     if(opts.inlineStage==='body-focus'&&opts.workstation!=='chinese-editor')throw new Error('局部表达替换只用于中文编辑');
     if(opts.sourceStyle&&(opts.workstation!=='naturalness-reviewer'||opts.inlineStage||opts.termSelection||opts.voiceEvidence||opts.fieldAttribution||opts.registerEvidence))throw new Error('原作表达复核只能独立用于读感工位');
-    const selectedSystem = opts.sourceStyle?SOURCE_STYLE_PROMPT:opts.inlineStage==='body-focus'?EXPRESSION_FOCUS_PROMPT:opts.inlineStage==='punctuation-choice'?COMMA_SELECTION_PROMPT:opts.inlineStage==='body'?visibleBodyPrompt(opts.workstation as 'faithful-translator'|'chinese-editor'):opts.inlineStage==='layout'?IMMUTABLE_LAYOUT_PROMPT:opts.inlineStage==='layout-segments'?LAYOUT_SEGMENTS_PROMPT:opts.inlineStage==='layout-anchors'?LAYOUT_ANCHORS_PROMPT:opts.registerEvidence ? REGISTER_EVIDENCE_PROMPT : opts.fieldAttribution ? FIELD_ATTRIBUTION_PROMPT : opts.voiceEvidence ? VOICE_EVIDENCE_PROMPT : opts.termSelection ? TERM_SELECTION_INSTRUCTION : systemPromptFor(opts.workstation);
+    if(opts.initialFieldAttribution && (opts.workstation!=='character-evidence-reviewer' || opts.termSelection || opts.voiceEvidence || opts.fieldAttribution || opts.registerEvidence || opts.inlineStage || opts.sourceStyle))throw new Error('初次属性复核只能独立用于人物证据工位');
+    const selectedSystem = opts.initialFieldAttribution?(opts.initialFieldAttribution==='ownership'?INITIAL_OWNERSHIP_PROMPT:INITIAL_SUPPORT_PROMPT):opts.sourceStyle?SOURCE_STYLE_PROMPT:opts.inlineStage==='body-focus'?EXPRESSION_FOCUS_PROMPT:opts.inlineStage==='punctuation-choice'?COMMA_SELECTION_PROMPT:opts.inlineStage==='body'?visibleBodyPrompt(opts.workstation as 'faithful-translator'|'chinese-editor'):opts.inlineStage==='layout'?IMMUTABLE_LAYOUT_PROMPT:opts.inlineStage==='layout-segments'?LAYOUT_SEGMENTS_PROMPT:opts.inlineStage==='layout-anchors'?LAYOUT_ANCHORS_PROMPT:opts.registerEvidence ? REGISTER_EVIDENCE_PROMPT : opts.fieldAttribution ? FIELD_ATTRIBUTION_PROMPT : opts.voiceEvidence ? VOICE_EVIDENCE_PROMPT : opts.termSelection ? TERM_SELECTION_INSTRUCTION : systemPromptFor(opts.workstation);
     const system = opts.inlineStage && !['body','body-focus'].includes(opts.inlineStage) ? selectedSystem : withMandatoryRequirements(selectedSystem,opts.workstation);
     const release = await this.sem.acquire(opts.signal);
     const started = Date.now();
@@ -240,6 +243,7 @@ export class AiClient {
       const p = parsed ?? parse(r.text);
       this.runGuard?.outcome(p.ok);
       if (p.ok) {
+        if(opts.initialFieldAttribution)this.store.db.run('INSERT INTO meta(key,value) VALUES(?,?)',['initial-field-call:'+r.aiCallId,JSON.stringify({baseUser:opts.user,user,response:r.text,stage:opts.initialFieldAttribution,prompt:opts.initialFieldAttribution==='ownership'?INITIAL_OWNERSHIP_PROMPT:INITIAL_SUPPORT_PROMPT,diagnostics:[...diagnostics]})]);
         this.store.translations.log({
           level: 'success',
           workstationId: opts.workstation,

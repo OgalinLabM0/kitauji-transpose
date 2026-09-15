@@ -2,7 +2,7 @@ import {foreignNoteTexts} from '../workflow/foreignNotes';
 import { preReadInputsCurrent } from './narrativeSources';
 import { sceneIdentitySignature } from './sceneIdentityProof';
 import { createHash } from 'node:crypto';
-import { preparationContract } from '../ai/preparationContract';
+import { preparationContract, preparationContractAccepted } from '../ai/preparationContract';
 import { Db, newId, nowIso, fromJson, toJson } from './database';
 import type { SeriesSummary, VolumeSummary, ChapterSummary, ParagraphView, ParagraphType, ProjectSettings, WorkstationId } from '@shared/types';
 import { DEFAULT_PROJECT_SETTINGS } from '@shared/types';
@@ -45,7 +45,7 @@ export class ProjectRepo {
     for (const c of ids) {
       const row = this.db.get<{ value: string }>('SELECT value FROM meta WHERE key=?', [`prep:${kind}:${c}`]);
       const proof = fromJson<{ version?: number; source?: string; contract?: string }>(row?.value, {});
-      if ((kind !== 'preread' || preReadInputsCurrent(this.db, c)) && proof.version === 1 && proof.contract === preparationContract(kind) && proof.source === this.chapterSourceSignature(c)) done.add(c);
+      if ((kind !== 'preread' || preReadInputsCurrent(this.db, c)) && proof.version === 1 && preparationContractAccepted(kind, proof.contract) && proof.source === this.chapterSourceSignature(c)) done.add(c);
     }
     return done;
   }

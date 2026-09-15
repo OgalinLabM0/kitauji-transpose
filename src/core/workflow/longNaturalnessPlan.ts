@@ -20,7 +20,7 @@ const SCOPE = '只检查draft的中文搭配与连接，不改写、不判断增
 export class LongNaturalnessBoundaryError extends Error {
   readonly code = 'LONG_NATURALNESS_NEEDS_BOUNDARY';
   constructor(readonly start: number, readonly end: number, reason: string) {
-    super(`${reason}（中文UTF-16范围 ${start}–${end}）。已保留完整稿；请核对并补充合法句末/对白边界后重新复核，或使用经确认的段落拆分流程。不能仅点击通过或删除原文来绕过必需读感。`);
+    super(`${reason}（中文UTF-16范围 ${start}–${end}）。已保留完整稿；请核对导入分段，或使用支持该结构的读感检查流程。不能通过改标点、删内容或仅点击通过来绕过必需读感。`);
     this.name = 'LongNaturalnessBoundaryError';
   }
 }
@@ -48,18 +48,28 @@ export function readingUnits(draft: string): ReadingRange[] {
   };
   for (let i = 0; i < draft.length; i++) {
     const c = draft[i]!;
-    // ASCII quotation cannot be attributed safely by this contract; recover rather than silently splitting it.
-    if (c === '"') throw new LongNaturalnessBoundaryError(start, i + 1, '长段包含本契约尚不能安全配对的ASCII双引号');
-    if (closes[c]) stack.push(closes[c]!);
+    let closedQuote = false;
+    if (c === '"') {
+      // An odd run escapes the quote; an even run leaves it structural.
+      // Keep every slash and quote in the actual text/ranges sent for reading.
+      let slashes = 0;
+      for (let j = i - 1; j >= 0 && draft[j] === '\\'; j--) slashes++;
+      if (slashes % 2) continue;
+      if (stack.at(-1) === '"') { stack.pop(); closedQuote = true; }
+      else if (stack.includes('"')) throw new LongNaturalnessBoundaryError(start, i + 1, '长段引号或括号交叉而未配对');
+      else stack.push('"');
+    }
+    else if (closes[c]) stack.push(closes[c]!);
     else if (closing.has(c)) {
       if (stack.pop() !== c) throw new LongNaturalnessBoundaryError(start, i + 1, '长段引号或括号未配对');
+      closedQuote = /[」』”’]/u.test(c);
       // Do not cut a reporting clause immediately following a closing quote.
     }
     // A layout newline is not proof that a sentence has ended. Whitespace
     // immediately after a completed unit belongs to that unit, not a new sentence.
     if (!stack.length && units.length && start === i && /\s/u.test(c)) flush(i + 1);
     if (!stack.length && /[。！？!?]/u.test(c)) flush(i + 1);
-    if (!stack.length && /[」』”’]/u.test(c) && (i + 1 === draft.length || /[「『“‘\s]/u.test(draft[i + 1]!))) flush(i + 1);
+    if (!stack.length && closedQuote && (i + 1 === draft.length || /[「『“‘"\s]/u.test(draft[i + 1]!))) flush(i + 1);
   }
   if (stack.length) throw new LongNaturalnessBoundaryError(start, draft.length, '长段引号或括号尚未闭合');
   flush(draft.length);

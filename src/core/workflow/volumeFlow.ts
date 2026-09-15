@@ -1,3 +1,5 @@
+import { quarantineInitialFields } from '../db/initialFieldTrust';
+import { reviewInitialFields } from './initialFieldAttribution';
 import { reviewRelationshipTerminations } from './relationshipTerminationReview';
 import { termReviewMatcher } from './termConfirmation';
 import { pruneGenerationResumes } from './generationResume';
@@ -14,6 +16,7 @@ import { resolveParagraphLiteralAddresses } from './paragraphLiteralAddresses';
 import { resolveQuirkProposals } from './automaticQuirkDecisions';
 import { reviewVolumeTrajectory } from './trajectoryReview';
 import { reviewChapterReading } from './chapterReading';
+import { repairChapterReadingIssues } from './chapterReadingRepair';
 import { repairTrajectoryIssues } from './trajectoryRepair';
 import { resolveTermProposals } from './automaticTermDecisions';
 import { RunGuard, RunStopped, type RunLimits } from '../ai/runGuard';
@@ -75,7 +78,8 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
   const prior = volumeRunState(store, volumeId);
   let state: VolumeRunState = { volumeId, status: 'running', phase: 'preread', done: 0, total: ids.length, message: '准备本册任务', updatedAt: nowIso(), scanKey: prior?.scanKey ?? null, stopReason: null };
   const publish = (patch: Partial<VolumeRunState>, admission = false) => {
-    const next = { ...state, ...patch, updatedAt: nowIso() };
+    const next = { ...state, ...(patch.phase && patch.phase !== state.phase ? { detail: null } : {}), ...patch, updatedAt: nowIso() };
+    if (next.phase === 'translate') next.detail = { phase: 'translate', label: '翻译与逐段检查', done: next.done, total: next.total, unit: '段' };
     const persistAndNotify = () => {
       store.db.run('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', [key(volumeId), JSON.stringify(next)]);
       opts.onState?.(structuredClone(next));
@@ -105,7 +109,7 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
     ...(opts.signal ? { signal: opts.signal } : {}),
     // PrepRunner's done/total are chapter-level. Forward its finer-grained
     // messages without pretending that a paragraph batch is translated work.
-    onProgress: p => { if (p.message) publish({ message: p.message }); },
+    onProgress: p => { if (p.message) publish({ message: p.message, detail: p.detail ?? (p.running && state.phase === 'scenes' ? { phase: state.phase, label: p.phase, done: p.done, total: p.total, unit: '段' } : null) }); },
   });
   const operations: VolumeOperations = opts.operations ?? {
     preRead: c => prep.preRead(volumeId, c), terms: c => prep.extractTerms(volumeId, c), scenes: p => prep.analyzeScenes(p), honorifics: () => prep.prescanHonorifics(volumeId),
@@ -131,6 +135,7 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
     publish({});
     check();
     if (!ids.length) return attention('本册没有可处理正文，请检查导入结果');
+    quarantineInitialFields(store,seriesId);
     assertAcceptedChangeSources(store.db, seriesId);
     const refreshed = refreshAutomaticSources(store, seriesId);
     if (refreshed.blocked) return attention(`有 ${refreshed.blocked} 项自动知识来源已变化且存在后续修改，请先核对较新的决定，原数据已保留`);
@@ -165,6 +170,8 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
     // Resolve source-only character observations before scenes depend on them.
     // Otherwise adopting a field immediately invalidates the scene just built.
     begin({ phase: 'knowledge', message: '核对人物观察与旧记录' });
+    await reviewInitialFields(store,ai,volumeId,opts.signal);
+    check();
     await resolveCharacterKnowledge(store,ai,volumeId,opts.signal);
     check();
     begin({ phase: 'knowledge', message: '核对人物档案的停用建议' });
@@ -241,13 +248,16 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
     }
     begin({ phase: 'trajectory', message: '核对跨段／跨章术语、人物声音与前后承接' });
     check();
-    await reviewVolumeTrajectory(store, ai, volumeId, opts.signal, (done, total) => begin({ message: `跨段／跨章核查：${done}/${total} 组` }));
+    await reviewVolumeTrajectory(store, ai, volumeId, opts.signal, (done, total) => begin({ detail: { phase: 'trajectory', label: '跨段与跨章核查', done, total, unit: '组' }, message: `跨段／跨章核查：${done}/${total} 组` }));
     check();
     begin({ message: '尝试修复有明确证据的跨章问题，保留人工稿与不确定项' });
     await repairTrajectoryIssues(store, ai, volumeId, opts.signal);
     check();
     begin({ message: '章级连续阅读：独立核对相邻句群，不改写正文' });
-    await reviewChapterReading(store, ai, volumeId, opts.signal, (done, total) => begin({ message: `章级连续阅读：${done}/${total} 组；失效结果重新核查` }));
+    await reviewChapterReading(store, ai, volumeId, opts.signal, (done, total) => begin({ detail: { phase: 'trajectory', label: '章节连读检查', done, total, unit: '组' }, message: `章级连续阅读：${done}/${total} 组；失效结果重新核查` }));
+    check();
+    begin({ message: '核对章级问题的原文依据，必要时定点修复并完整复验' });
+    await repairChapterReadingIssues(store, ai, volumeId, opts.signal);
     check();
     begin({ phase: 'delivery', message: '检查整册交付条件' });
     check();

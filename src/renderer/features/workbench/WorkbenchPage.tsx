@@ -1,7 +1,6 @@
 import { useDraft } from '../../store/useDraft';
 import { draftIdentity } from '../../store/draftIdentityBridge';
 import { TaskOverview } from './TaskOverview';
-import { DeliveryCommand } from './DeliveryCommand';
 import '../../styles/workbench.css';
 import { SeriesExportDialog } from './SeriesExportDialog';
 import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react';
@@ -34,6 +33,12 @@ export function WorkbenchPage() {
   const [paras, setParas] = useState<ParagraphView[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [references, setReferences] = useState<Record<string, string>>({});
+  const [showReferences, setShowReferences] = useState(false);
+  useEffect(() => { let active = true; setReferences({}); setShowReferences(false);
+    if (currentVolumeId) void api.project.referenceTranslations(currentVolumeId).then(r => { if (active) setReferences(r); }).catch(e => { if (active) toast('error', `已有译文读取失败：${String(e)}`); });
+    return () => { active = false; };
+  }, [currentVolumeId]);
   const [readingMode, setReadingMode] = useState(false);
   const [chapterOpen, setChapterOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -127,12 +132,12 @@ export function WorkbenchPage() {
         <div className="reader-heading-copy"><span className="reader-eyebrow">第 {vol.volumeNumber} 册 · 翻译与阅读</span><h1>{page === 'volume' ? (vol.title ?? '全册连读') : (ch?.title ?? vol.title ?? '正文')}</h1></div>
         <button className="btn btn-secondary btn-sm" onClick={() => setToolsOpen(true)}>更多操作</button>
       </header>
-      {currentSeriesId && <DeliveryCommand key={currentSeriesId} seriesId={currentSeriesId} onSetup={() => setDeliveryOpen(true)} onDetails={id => setOverviewVolume(id ?? currentVolumeId)} />}
       <div className="reader-toolbar" aria-label="阅读显示设置">
         <button className="btn btn-secondary btn-sm" aria-expanded={chapterOpen} onClick={() => setChapterOpen(o => !o)}><ListTree size={15} />目录</button>
         <div className="page-toggle" role="group" aria-label="阅读范围"><button className={'pt-item'+(page === 'chapter' ? ' on' : '')} aria-pressed={page === 'chapter'} onClick={() => { setPage('chapter'); unitsRef.current?.scrollTo(0, 0); }}>当前章</button><button className={'pt-item'+(page === 'volume' ? ' on' : '')} aria-pressed={page === 'volume'} onClick={() => { setPage('volume'); unitsRef.current?.scrollTo(0, 0); }}>全册连读</button></div>
         <label className="reader-chapter-select"><span className="sr-only">章节</span><select className="input" aria-label="章节" value={page === 'volume' ? '' : currentChapterId ?? ''} onChange={e => { if (page === 'volume') { document.getElementById(`reader-chapter-${e.target.value}`)?.scrollIntoView({ block: 'start', behavior: 'instant' }); } else { selectChapter(e.target.value); unitsRef.current?.scrollTo(0, 0); } }}>{page === 'volume' && <option value="" disabled>全册连读 · 跳转到章节…</option>}{chapters.map(c => <option key={c.id} value={c.id}>{c.title ?? '无标题'}</option>)}</select></label>
         <div className="page-toggle" role="group" aria-label="阅读方式"><button className={'pt-item'+(!readingMode ? ' on' : '')} aria-pressed={!readingMode} onClick={() => setReadingMode(false)}>日中对照</button><button className={'pt-item'+(readingMode ? ' on' : '')} aria-pressed={readingMode} onClick={() => setReadingMode(true)}>只读中文</button></div>
+        {Object.keys(references).length > 0 && <button className="btn btn-secondary btn-sm" aria-pressed={showReferences} onClick={() => setShowReferences(v => !v)}>{showReferences ? '收起已有译文' : '对比已有译文'}</button>}
         <label className="reader-filter"><span className="sr-only">段落筛选</span><select className="input" aria-label="段落筛选" value={statusFilter} onChange={e => setStatusFilter(e.target.value as StatusFilter)}>{(Object.keys(STATUS_LABEL) as StatusFilter[]).filter(k => k !== 'translating').map(k => <option key={k} value={k}>{STATUS_LABEL[k]} {statusCounts[k]}</option>)}</select></label>
       </div>
       <div className={'workbench reader-workbench side-collapsed'+(chapterOpen ? ' with-directory' : '')+(readingMode ? ' reading-mode' : ' comparison-mode')}>
@@ -142,7 +147,7 @@ export function WorkbenchPage() {
           {readingMode && !paras.some(p => p.final) && <p className="reader-empty-note">当前阅读范围还没有译文，先显示日文原文。开始翻译后，中文会出现在这里。</p>}
           {filtered.length === 0 && <div className="empty"><p className="muted">{paras.length === 0 ? (page === 'chapter' ? '本章没有段落' : '全册没有段落') : '没有符合该状态的段落'}</p></div>}
           {page === 'chapter' ? (
-            filtered.map(p => <Unit key={p.id} readingMode={readingMode} p={p} isCurrent={p.id === current} isEditing={editing === p.id} onSelect={() => setCurrent(p.id)} onEdit={() => setEditing(p.id)} onEditDone={() => setEditing(null)} running={progress.running && progress.currentParagraphId === p.id} />)
+            filtered.map(p => <Unit referenceText={showReferences ? references[p.id] : undefined} key={p.id} readingMode={readingMode} p={p} isCurrent={p.id === current} isEditing={editing === p.id} onSelect={() => setCurrent(p.id)} onEdit={() => setEditing(p.id)} onEditDone={() => setEditing(null)} running={progress.running && progress.currentParagraphId === p.id} />)
           ) : (
             chapters.map(c => {
               const group = filtered.filter(p => p.chapterId === c.id);
@@ -155,7 +160,7 @@ export function WorkbenchPage() {
                     <span className="grow" />
                     <span className="small faint">切到本章</span>
                   </div>
-                  {group.map(p => <Unit key={p.id} readingMode={readingMode} p={p} isCurrent={p.id === current} isEditing={editing === p.id} onSelect={() => setCurrent(p.id)} onEdit={() => setEditing(p.id)} onEditDone={() => setEditing(null)} running={progress.running && progress.currentParagraphId === p.id} />)}
+                  {group.map(p => <Unit referenceText={showReferences ? references[p.id] : undefined} key={p.id} readingMode={readingMode} p={p} isCurrent={p.id === current} isEditing={editing === p.id} onSelect={() => setCurrent(p.id)} onEdit={() => setEditing(p.id)} onEditDone={() => setEditing(null)} running={progress.running && progress.currentParagraphId === p.id} />)}
                 </div>
               );
             })
@@ -201,7 +206,7 @@ export function WorkbenchPage() {
   );
 }
 
-function Unit({ p, isCurrent, isEditing, onSelect, onEdit, onEditDone, running, readingMode }: { readingMode: boolean; p: ParagraphView; isCurrent: boolean; isEditing: boolean; onSelect: () => void; onEdit: () => void; onEditDone: () => void; running: boolean }) {
+function Unit({ referenceText, p, isCurrent, isEditing, onSelect, onEdit, onEditDone, running, readingMode }: { referenceText?: string | undefined; readingMode: boolean; p: ParagraphView; isCurrent: boolean; isEditing: boolean; onSelect: () => void; onEdit: () => void; onEditDone: () => void; running: boolean }) {
   const draft = useDraft(`draft-paragraph-${p.id}`, p.final?.text ?? p.latestCandidate?.text ?? '', { version: p.final?.version ?? 0, sourceText: p.sourceText });
   const text = draft.text; const setText = draft.change;
   const flagged = (p.final && p.audit !== 'valid') || p.openFindings > 0 || (p.final && !p.final.confirmed && !p.final.autoAccepted);
@@ -215,6 +220,7 @@ function Unit({ p, isCurrent, isEditing, onSelect, onEdit, onEditDone, running, 
   };
   return (
     <div id={`u-${p.id}`} className={cls} onClick={onSelect}>
+      {referenceText !== undefined && <div className="card" style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}><span className="small muted">已有译文 · 仅供对照，未发送给模型</span><p lang="zh">{referenceText}</p></div>}
       <div className="unit-meta">
         <span>§{p.paraOrdinal}</span><span>{p.paragraphType === 'dialogue' ? '对话' : p.paragraphType === 'narration' ? '叙述' : '混合'}</span>
         {p.analysis?.speakerName && <span>说话人：{p.analysis.speakerName}{p.analysis.speakerConfidence != null && p.analysis.speakerConfidence < 0.8 ? ` (${p.analysis.speakerConfidence.toFixed(2)})` : ''}</span>}

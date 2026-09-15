@@ -87,7 +87,7 @@ export function createPreviewApi(notify: (message: string) => void = () => {}): 
     project: {
       listImportQueues: async () => [], listDamagedImportQueues: async () => [], quarantineImportQueue: deny('保留损坏导入清单'), createImportQueue: deny('保存导入清单'), updateImportQueue: deny('修改导入清单'), discardImportQueue: deny('丢弃导入清单'), inspectQueuedFile: deny('体检导入清单文件'), importNextQueuedFile: deny('继续导入清单'),
       listSeries: async () => copy(data.series), getSeries: async id => copy(data.series.find(s => s.id === id) ?? null),
-      deleteSeries: deny('删除作品'), inspectImport: deny('检查导入文件'), cancelImport: deny('取消原生导入任务'), importFile: deny('导入文件'),
+      referenceTranslations: async () => ({}), deleteSeries: deny('删除作品'), inspectImport: deny('检查导入文件'), cancelImport: deny('取消原生导入任务'), importFile: deny('导入文件'),
       listVolumes: async id => copy(requireSeries(id).volumes),
       rebuildEpubChapters: deny('整理EPUB章节'),
       listChapters: async id => { volumeParagraphs(id); return copy(data.chapters.filter(c => c.volumeId === id)); },

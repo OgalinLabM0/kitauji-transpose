@@ -3,11 +3,13 @@ import type { CharacterRow } from './knowledgeRepo';
 import type { CharacterFieldDecisionView, QuirkProfile } from '@shared/types';
 import { characterSourceProof, characterSourceCurrent } from './characterSources';
 import { withIdentityRead } from './identitySources';
+import { initialFactAllowed, initialFactFrom } from './initialFieldTrust';
 
 export const CHARACTER_FIELDS = ['gender', 'first_person_type', 'speech_register', 'voice_notes', 'plurality'] as const;
 export type CharacterField = typeof CHARACTER_FIELDS[number];
-export interface CharacterFact { field: CharacterField; value_json: string; valid_from_para: number; origin: 'model' | 'user'; evidence_ids: string; source_proof?: string | null }
-export const characterFactCurrent = (db: Db, fact: CharacterFact) => fact.origin === 'user' || characterSourceCurrent(db, fact.source_proof);
+export interface CharacterFact { character_id?: string; field: CharacterField; value_json: string; valid_from_para: number; origin: 'model' | 'user'; evidence_ids: string; source_proof?: string | null }
+export const characterFactCurrent = (db: Db, fact: CharacterFact, id = fact.character_id, scope:'global'|'local'='global') => fact.origin === 'user' || (characterSourceCurrent(db, fact.source_proof) && initialFactAllowed(db,fact,id,scope));
+export const characterFactFrom = initialFactFrom;
 
 interface StoredFact extends CharacterFact { created_at: string; source_quotes: string | null }
 interface FieldEdit { id: number; character_id: string; field: CharacterField; valid_from_para: number; previous_fact_json: string | null; applied_fact_json: string; baseline_json: string; created_at: string; undone_at: string | null; invalidated: number }
@@ -27,7 +29,7 @@ export function saveCharacterFact(db: Db, id: string, field: CharacterField, val
   if (origin === 'model') {
     if (evidence.some(id => !sourceIds.includes(id))) throw new Error('人物观察来源范围未覆盖字段证据');
     if (db.get("SELECT 1 FROM character_field_history WHERE character_id=? AND field=? AND origin='user' AND valid_from_para<=?", [id,field,at])) return;
-    if (previous && characterFactCurrent(db, previous) && meaning(field,previous.value_json) !== meaning(field,valueJson)) throw new Error(`人物字段 ${field} 在第 ${at} 段存在冲突候选：原记录「${String(meaning(field,previous.value_json)).slice(0, 100)}」，新候选「${String(meaning(field,valueJson)).slice(0, 100)}」。原记录已保留，请核对后决定`);
+    if (previous && characterFactCurrent(db, previous,id) && meaning(field,previous.value_json) !== meaning(field,valueJson)) throw new Error(`人物字段 ${field} 在第 ${at} 段存在冲突候选：原记录「${String(meaning(field,previous.value_json)).slice(0, 100)}」，新候选「${String(meaning(field,valueJson)).slice(0, 100)}」。原记录已保留，请核对后决定`);
   }
   if (origin === 'user' && !baseline) throw new Error('字段决定缺少撤销基线');
   const original = baseline ?? db.get<CharacterRow>('SELECT * FROM characters WHERE id=?', [id]);
@@ -35,7 +37,7 @@ export function saveCharacterFact(db: Db, id: string, field: CharacterField, val
   db.run('INSERT OR IGNORE INTO character_field_baselines(character_id,field,value_json) VALUES(?,?,?)', [id,field,JSON.stringify(fieldValue(original,field))]);
   const createdAt = nowIso();
   const proof = origin === 'model' ? characterSourceProof(db, id, sourceIds, eventIds) : null;
-  if (previous && origin === 'model' && !characterFactCurrent(db, previous)) db.run('INSERT INTO character_field_archive(character_id,fact_json,archived_at) VALUES(?,?,?)', [id, JSON.stringify(previous), createdAt]);
+  if (previous && origin === 'model' && !characterFactCurrent(db, previous,id)) db.run('INSERT INTO character_field_archive(character_id,fact_json,archived_at) VALUES(?,?,?)', [id, JSON.stringify(previous), createdAt]);
   db.run(`INSERT INTO character_field_history(character_id,field,value_json,valid_from_para,origin,evidence_ids,created_at,source_quotes,source_proof)
     VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(character_id,field,valid_from_para,origin) DO UPDATE SET value_json=excluded.value_json,evidence_ids=excluded.evidence_ids,created_at=excluded.created_at,source_quotes=excluded.source_quotes,source_proof=excluded.source_proof`,
   [id, field, valueJson, at, origin, JSON.stringify(evidence), createdAt, JSON.stringify(quotes), proof]);
@@ -81,8 +83,9 @@ export function characterAt(db: Db, row: CharacterRow, at: number): CharacterRow
   const history = db.all<CharacterFact>('SELECT * FROM character_field_history WHERE character_id=? ORDER BY valid_from_para DESC', [row.id]);
   for (const field of CHARACTER_FIELDS) {
     const all = history.filter(h => h.field === field);
-    if (!all.length) continue; // Legacy/manual values without a known boundary retain their existing meaning.
-    const applicable = all.filter(h => h.valid_from_para <= at && characterFactCurrent(db, h));
+    // A raw profile mirror without field-level provenance is not an established fact.
+    // Preserve it in storage, but expose unknown until source review or an explicit user field decision.
+    const applicable = all.filter(h => characterFactFrom(db,h) <= at && characterFactCurrent(db, h)).sort((a,b)=>characterFactFrom(db,b)-characterFactFrom(db,a));
     const selected = applicable.find(h => h.origin === 'user') ?? applicable.find(h => h.origin === 'model');
     if (field === 'gender') {
       const value = selected ? fromJson<{ gender: string | null; confidence: number | null; evidenceIds: string[] }>(selected.value_json, { gender: null, confidence: 0, evidenceIds: [] }) : { gender: null, confidence: 0, evidenceIds: [] };

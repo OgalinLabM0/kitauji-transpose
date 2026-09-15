@@ -69,7 +69,7 @@ export class AppService {
   private readonly automaticDeliveries = new Set<string>();
   private readonly pendingDeliveryContinuations = new Map<string,string>();
   private deliveryTimer: NodeJS.Timeout | null = null;
-  private latestProgress: WorkflowProgress = { running: false, paused: false, phase: 'idle', done: 0, total: 0, currentParagraphId: null, costUsd: 0, inputTokens: 0, outputTokens: 0, message: '' };
+  private latestProgress: WorkflowProgress = { running: false, paused: false, detail: null, phase: 'idle', done: 0, total: 0, currentParagraphId: null, costUsd: 0, inputTokens: 0, outputTokens: 0, message: '' };
   private lastLogId = 0;
   private logTimer: NodeJS.Timeout | null = null;
   private repairTimer: NodeJS.Timeout | null = null;
@@ -201,7 +201,7 @@ export class AppService {
   }
   private resetMaintenanceUi(): string {
     this.lastLogId = 0; this.lastSceneDone = 0;
-    this.latestProgress = { ...this.latestProgress, running: false, paused: false, phase: 'idle', done: 0, total: 0, currentParagraphId: null, message: '' };
+    this.latestProgress = { ...this.latestProgress, running: false, paused: false, detail: null, phase: 'idle', done: 0, total: 0, currentParagraphId: null, message: '' };
     try { this.settings.setUi({ currentSeriesId: null, currentVolumeId: null }); return ''; }
     catch (error) { return `；界面选择保存失败：${this.errorMessage(error)}`; }
   }
@@ -220,7 +220,7 @@ export class AppService {
     const epoch = this.cancelEpoch;
     return this.tasks.run(async () => {
       if (this.maintenance || epoch !== this.cancelEpoch) throw new Error('已取消');
-      this.latestProgress = { ...this.latestProgress, running: true, paused: false, message: '准备任务…' };
+      this.latestProgress = { ...this.latestProgress, running: true, paused: false, detail: null, done: 0, total: 0, phase: '准备任务', message: '准备任务…' };
       try { this.emit('progress', this.latestProgress); return await work(); }
       finally {
         this.current = null;
@@ -305,7 +305,7 @@ export class AppService {
       this.current={kind:'prep',run:new PrepRunner(this.store,this.ai,{signal:abort.signal}),abort};
       try {
         const result=await deliverSeries(this.store,this.ai,seriesId,request,{signal:abort.signal,onState:state=>{
-          this.progress({...this.latestProgress,running:true,phase:state.phase==='export'?'保存成品':'全作品 · 已检查册数',done:state.run?.done??0,total:state.run?.total??0,message:state.message,costUsd:0,inputTokens:state.run?.usage.inputTokens??0,outputTokens:state.run?.usage.outputTokens??0,unknownUsageRequests:state.run?.usage.unknownUsageRequests??0});
+          this.progress({...this.latestProgress,running:true,phase:state.phase==='export'?'保存成品':'全作品 · 已检查册数',detail:state.phase==='export'?null:state.run?.currentRun?.detail??null,done:state.run?.done??0,total:state.run?.total??0,message:state.message,costUsd:0,inputTokens:state.run?.usage.inputTokens??0,outputTokens:state.run?.usage.outputTokens??0,unknownUsageRequests:state.run?.usage.unknownUsageRequests??0});
         }});
         // A verified new final fulfills an already queued decision repair in this delivery scope.
         try { for (const volume of result.scope) for (const paragraphId of this.store.projects.listParagraphIdsByVolume(volume.id)) {
@@ -580,6 +580,7 @@ export class AppService {
           }, { preserveLibraryIdentity: true });
         },
         listChapters: (vid) => s.projects.listChapters(id.parse(vid)),
+        referenceTranslations: (vid) => s.archives.referenceTranslations(id.parse(vid)),
         listParagraphs: (cid) => withAuditStatus(s, s.projects.listParagraphViews(id.parse(cid))),
         listParagraphsByVolume: (vid) => withAuditStatus(s, s.projects.listParagraphViewsByVolume(id.parse(vid))),
         getParagraph: (pid) => { const p = s.projects.getParagraphView(id.parse(pid)); return p ? withAuditStatus(s, [p])[0]! : null; },
@@ -640,7 +641,7 @@ export class AppService {
           const abort = new AbortController();
           this.current = { kind: 'prep', run: new PrepRunner(this.store, this.ai, { signal: abort.signal }), abort };
           try { return await runSeriesFlow(this.store, this.ai, id.parse(sid), { signal: abort.signal, onState: state => {
-            this.progress({ ...this.latestProgress, running: true, phase: '连续处理全部册', done: state.done, total: state.total, message: state.message, costUsd: 0, ...state.usage });
+            this.progress({ ...this.latestProgress, running: true, phase: '连续处理全部册', detail: state.currentRun?.detail ?? null, done: state.done, total: state.total, message: state.message, costUsd: 0, ...state.usage });
           } }); }
           finally { this.changed('paragraphs', 'queue', 'series', 'knowledge', 'glossary'); }
         }),
@@ -651,7 +652,7 @@ export class AppService {
           const abort = new AbortController();
           this.current = { kind: 'prep', run: new PrepRunner(this.store, this.ai, { signal: abort.signal }), abort };
           try { return await runVolumeFlow(this.store, this.ai, id.parse(vid), { signal: abort.signal, onState: state => {
-            this.progress({ ...this.latestProgress, running: true, phase: '连续处理本册', done: state.done, total: state.total, message: state.message, costUsd: 0, inputTokens: state.usage?.inputTokens ?? 0, outputTokens: state.usage?.outputTokens ?? 0, unknownUsageRequests: state.usage?.unknownUsageRequests ?? 0 });
+            this.progress({ ...this.latestProgress, running: true, phase: '连续处理本册', detail: state.detail ?? null, done: state.done, total: state.total, message: state.message, costUsd: 0, inputTokens: state.usage?.inputTokens ?? 0, outputTokens: state.usage?.outputTokens ?? 0, unknownUsageRequests: state.usage?.unknownUsageRequests ?? 0 });
           } }); }
           finally { this.changed('paragraphs', 'queue', 'series', 'knowledge', 'glossary'); }
         }),

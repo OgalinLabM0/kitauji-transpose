@@ -36,6 +36,16 @@ export class ArchiveRepo {
   blocksOfParagraph(paragraphId: string): BlockRow[] { return this.db.all<BlockRow>('SELECT * FROM epub_text_blocks WHERE paragraph_id=? ORDER BY rowid', [paragraphId]); }
   blockById(id: string): BlockRow | undefined { return this.db.get<BlockRow>('SELECT * FROM epub_text_blocks WHERE id=?', [id]); }
 
+  /** Reader-only data. Never merge into ParagraphView or translation context. */
+  referenceTranslations(volumeId: string): Record<string, string> {
+    const rows = this.db.all<{ paragraph_id: string; source_text: string }>(`SELECT jp.paragraph_id, ref.source_text
+      FROM epub_text_blocks ref JOIN spine_items si ON si.id=ref.spine_item_id
+      JOIN source_archives a ON a.id=si.archive_id
+      JOIN epub_text_blocks jp ON jp.spine_item_id=ref.spine_item_id AND jp.xpath=json_extract(ref.inline_template,'$.referenceXpath')
+      WHERE a.volume_id=? AND ref.block_type='reference-zh' AND ref.paragraph_id IS NULL AND jp.paragraph_id IS NOT NULL`, [volumeId]);
+    return Object.fromEntries(rows.map(r => [r.paragraph_id, r.source_text]));
+  }
+
   addToc(t: Omit<TocRow, 'id'>): string {
     const id = newId();
     this.db.run('INSERT INTO toc_entries(id,archive_id,toc_source,entry_path,source_label,heading_block_id) VALUES(?,?,?,?,?,?)', [id, t.archive_id, t.toc_source, t.entry_path, t.source_label, t.heading_block_id]);

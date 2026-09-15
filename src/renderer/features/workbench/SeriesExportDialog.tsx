@@ -12,6 +12,9 @@ export function SeriesExportDialog({ seriesId, onClose, autoProcess = false }: {
   const [result, setResult] = useState<SeriesExportResult | null>(null);
   const [busy, setBusy] = useState(false);
   const locked = useRef(false);
+  const dismissed = useRef(false);
+  const close = () => { dismissed.current = true; onClose(); };
+  useEffect(() => { dismissed.current = false; return () => { dismissed.current = true; }; }, []);
   const [delivery, setDelivery] = useState<SeriesDeliveryState | null>(null);
   const [loaded, setLoaded] = useState(!autoProcess);
   const [readRetry, setReadRetry] = useState(0);
@@ -41,15 +44,17 @@ export function SeriesExportDialog({ seriesId, onClose, autoProcess = false }: {
     try {
       if (autoProcess && resume) {
         setResult(null);
-        const r = await api.workflow.deliverSeries(seriesId); setDelivery(r); setResult(r.result);
+        const pending = api.workflow.deliverSeries(seriesId); onClose();
+        const r = await pending; setDelivery(r); setResult(r.result);
         toast(r.status === 'done' ? 'success' : 'info', r.status === 'done' ? '成品已保存' : '任务已暂停，详情和保存位置已保留'); return;
       }
       const title = (series.find(s => s.id === seriesId)?.title ?? '全作品').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 72);
       const path = await api.files.pickSavePath(`${title}（${mode === 'zh' ? '中文' : '对照'}全集）.zip`);
-      if (!path) return;
+      if (!path || dismissed.current) return;
       setResult(null);
       if (autoProcess) {
-        const r = await api.workflow.deliverSeries(seriesId, { mode, outputPath: path, continueAfterDecisions }); setDelivery(r); setResult(r.result);
+        const pending = api.workflow.deliverSeries(seriesId, { mode, outputPath: path, continueAfterDecisions }); onClose();
+        const r = await pending; setDelivery(r); setResult(r.result);
         toast(r.status === 'done' ? 'success' : 'info', r.status === 'done' ? '成品已保存' : '任务已暂停，详情和保存位置已保留'); return;
       }
       const r = await api.export.runSeries(seriesId, mode, path); setResult(r);
@@ -57,14 +62,15 @@ export function SeriesExportDialog({ seriesId, onClose, autoProcess = false }: {
     } catch (e) { toast('error', `任务未完成：${(e as Error).message}`); }
     finally { locked.current = false; setBusy(false); }
   };
-  return <Modal title={autoProcess ? '自动处理并保存' : '导出全部册'} width={640} onClose={() => { if (!locked.current) onClose(); }} footer={<>
-    <button className="btn btn-secondary" disabled={busy} onClick={onClose}>关闭</button>
+  return <Modal title={autoProcess ? '自动处理并保存' : '导出全部册'} width={640} onClose={close} footer={<>
+    <button className="btn btn-secondary" onClick={close}>{busy ? '收起窗口，后台继续' : '关闭'}</button>
+    <button className="btn btn-secondary" onClick={() => { useApp.getState().setPage('logs'); onClose(); }}>查看日志</button>
     {(busy || (autoProcess && delivery?.status==='running')) && <button className="btn btn-secondary" onClick={() => void tryApi(() => api.workflow.cancel())}>{autoProcess ? '停止任务' : '取消导出'}</button>}
     {autoProcess && delivery?.status==='attention' && delivery.waitingDecisionIds?.length ? <button className="btn btn-secondary" disabled={busy || progress.running} onClick={()=>void tryApi(async()=>{await api.workflow.cancel();setDelivery(await api.workflow.deliveryState(seriesId));})}>停止自动继续</button>:null}
     {autoProcess && delivery && delivery.status !== 'done' && <button className="btn btn-primary" disabled={busy || progress.running || !loaded} onClick={() => void run(true)}>继续处理</button>}
     {(!autoProcess || !delivery || delivery.status==='done') && <button className="btn btn-primary" disabled={busy || progress.running || !loaded || (autoProcess ? !check?.volumes.length : !check?.ok)} onClick={() => void run()}>{autoProcess ? '选择位置并开始' : '保存全作品 ZIP'}</button>}
   </>}>
-    {autoProcess && <p className="delivery-setup-lead">{delivery && delivery.status !== 'done' ? '已有进度会接着处理，无需重新选位置。' : '选好保存位置，剩下的准备、翻译和检查会自动完成。只在需要你决定译法时停下来。'}</p>}
+    {autoProcess && <p className="delivery-setup-lead">{delivery && delivery.status !== 'done' ? '已有进度会接着处理，无需重新选位置。' : '选好保存位置，剩下的准备、翻译和检查会自动完成。遇到需要确认的译法或处理错误时，会暂停并提示。'}</p>}
     {(deliveryError || checkError) && <div role="alert"><p>暂时无法读取{deliveryError ? '上次任务' : '各册进度'}：{deliveryError || checkError}。请重试，已有译稿和任务不会删除。</p><button className="btn btn-secondary btn-sm" disabled={busy || progress.running} onClick={() => setReadRetry(value => value + 1)}>重试读取</button></div>}
     <p className="small muted">完成后保存为 ZIP，解压即可阅读各册 EPUB。</p>
     <label className="small">内容<select className="input" disabled={busy} value={mode} onChange={e => setMode(e.target.value as typeof mode)}><option value="zh">中文译文</option><option value="bilingual">日中对照（依作品设置排列）</option></select></label>

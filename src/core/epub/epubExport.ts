@@ -3,6 +3,7 @@
  * 任一定位/哈希/标记回环失败即阻止导出，不静默降级。
  */
 import JSZip from 'jszip';
+import { REFERENCE_BLOCK } from './bilingual';
 import type { ProjectStore, BlockRow, RubyAnnotation } from '@core/db';
 import { parseXml, serializeXml, firstElementByName, elementsByName, childElements, localName, resolveXpath, hashVisible, resolveHref, dirOf, relativeTo } from './xml';
 import type { Document, Element } from './xml';
@@ -86,14 +87,30 @@ export async function exportEpub(store: ProjectStore, volumeId: string, opts: Ex
 
     // 两阶段：先在未修改的 DOM 上定位并校验全部块，再写回。
     // 双语模式会插入兄弟节点，边写边定位会让后续 xpath 序号整体偏移。
+    const referenceElements: Element[] = [];
     const located: { b: BlockRow; paragraphId: string; el: Element }[] = [];
     for (const b of blocks) {
+      if (b.block_type === REFERENCE_BLOCK) {
+        const ref = resolveXpath(body, b.xpath);
+        if (!ref || hashVisible(visibleTextOf(ref)) !== b.block_hash) failures.push({ code: 'BLOCK_HASH_MISMATCH', href: si.href, xpath: b.xpath, message: '已有译文定位校验失败，停止导出' });
+        else referenceElements.push(ref);
+        continue;
+      }
       if (!b.paragraph_id) { keptBlocks++; continue; }
       const el = resolveXpath(body, b.xpath);
       if (!el) { failures.push({ code: 'XPATH_NOT_FOUND', href: si.href, xpath: b.xpath, paragraphId: b.paragraph_id, message: '定位路径不存在' }); continue; }
       const curHash = hashVisible(visibleTextOf(el));
       if (curHash !== b.block_hash) { failures.push({ code: 'BLOCK_HASH_MISMATCH', href: si.href, xpath: b.xpath, paragraphId: b.paragraph_id, message: '源块文本与导入时不一致' }); continue; }
       located.push({ b, paragraphId: b.paragraph_id, el });
+    }
+    // All XPath lookups above precede any removal, preserving positional paths.
+    for (const ref of referenceElements) {
+      // Retain fragment destinations without retaining any old translation text.
+      for (const id of collectIds(ref as unknown as Document)) {
+        const anchor = doc.createElementNS(ref.namespaceURI, 'span'); anchor.setAttribute('id', id);
+        ref.parentNode?.insertBefore(anchor, ref);
+      }
+      ref.parentNode?.removeChild(ref); touched = true;
     }
     for (const { b, paragraphId, el } of located) {
       const fin = finals.get(paragraphId);
@@ -107,6 +124,12 @@ export async function exportEpub(store: ProjectStore, volumeId: string, opts: Ex
       }
       const ruby: RubyAnnotation[] = rubyByParagraph.get(paragraphId)!;
       const target = opts.mode === 'bilingual' ? cloneAsSibling(doc, el) : el;
+      if (referenceElements.length) {
+        target.setAttribute('lang','zh-CN');
+        if(target.hasAttribute('xml:lang'))target.setAttribute('xml:lang','zh-CN');
+        const style = (target.getAttribute('style') ?? '').replace(/(?:^|;)\s*opacity\s*:[^;]*(?:;|$)/gi, ';');
+        target.setAttribute('style', style + ';opacity:1;');
+      }
       const err = writeTranslation(doc, target, fin.final_text, template, { keepOriginalRuby: opts.keepOriginalRuby, rubySpans: ruby.map(r => ({ start: r.start, end: r.end, rt: r.rt })) });
       if (err) {
         if (opts.mode === 'bilingual') target.parentNode?.removeChild(target);

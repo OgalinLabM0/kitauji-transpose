@@ -1,7 +1,7 @@
 import { identityDependenciesCurrent, currentIdentityDependencies, identityInputCurrent, withIdentityRead, activeProofReadMemo, type IdentityDependency, type IdentityInputReceipt } from './identitySources';
 import { createHash } from 'node:crypto';
 import { Db, fromJson } from './database';
-import { preparationContract } from '../ai/preparationContract';
+import { preparationContract, preparationContractAccepted } from '../ai/preparationContract';
 
 export type NarrativeKind = 'event' | 'relationship';
 interface Dependency { id: string; fingerprint: string }
@@ -57,7 +57,7 @@ export function narrativeSourceCurrent(db: Db, kind: NarrativeKind, id: string, 
     if (memo.has(k)) continue;
     memo.set(k, false); // also rejects corrupted cycles
     const proof = readProof(db, task.kind, task.id);
-    if (!proof || proof.superseded || proof.contract !== preparationContract('preread')) continue;
+    if (!proof || proof.superseded || !preparationContractAccepted('preread', proof.contract)) continue;
     const scope = scopeOf(proof.source_ids);
     const snapshot = sources(db, scope.ids), facts = content(db, task.kind, task.id);
     if (!scope.ids.length || snapshot.some(row => !row) || !facts || proof.source_hash !== hash(snapshot) || proof.content_hash !== hash(facts)) continue;

@@ -3,6 +3,7 @@ import { setImmediate as yieldImport } from 'node:timers/promises';
  * EPUB 导入（docs/设计/EPUB_WRITEBACK.md 第 1 节）：不可变快照 + xpath/hash 定位 + 叶子块协议 + 目录映射。
  */
 import JSZip from 'jszip';
+import { bilingualPairs, isBilingualPresentationHeading, BilingualFormatError, REFERENCE_BLOCK } from './bilingual';
 import type { ProjectStore } from '@core/db';
 import { parseXml, firstElementByName, elementsByName, childElements, localName, xpathOf, hashVisible, sha256Hex, resolveHref, dirOf, findById } from './xml';
 import type { Element } from './xml';
@@ -67,7 +68,7 @@ export async function readManifest(zip: JSZip): Promise<EpubManifest> {
   return { opfPath, opfDir, items, spine, navHref, ncxHref, title: text('title'), author: text('creator'), language: text('language'), version };
 }
 
-interface ParsedSpineItem { href: string; index: number; parseable: boolean; blocks: ExtractedBlock[]; bodyId: Map<string, Element>; sectionTitle?: string }
+interface ParsedSpineItem { href: string; index: number; parseable: boolean; blocks: ExtractedBlock[]; bodyId: Map<string, Element>; retainedAppendix?: Set<Element>; sectionTitle?: string; references?: Map<Element, ExtractedBlock> }
 
 /** Structural declarations only: never classify story prose by its words. */
 function declaredSectionTitle(body: Element): string | undefined {
@@ -90,12 +91,18 @@ async function parseSpineItem(zip: JSZip, href: string, index: number): Promise<
     const body = firstElementByName(parsed.doc, 'body');
     if (!body) return { href, index, parseable: false, blocks: [], bodyId: new Map() };
     const blocks = collectLeafBlocks(body).map(el => extractBlock(el, xpathOf(el, body)));
+    const references = bilingualPairs(blocks, href);
+    // Preserve even punctuation-only paired lines in the reader correspondence.
+    for (const jp of references.values()) if (jp.protocol === 'untranslatable') jp.protocol = 'slots';
+    // A bilingual copy may supply only a translated chapter label. Keep it as
+    // presentation/navigation, never turn that label into a source paragraph.
+    for (const b of blocks) if (isBilingualPresentationHeading(b,references)) b.protocol='untranslatable';
     const bodyId = new Map<string, Element>();
     for (const b of blocks) { const id = b.el.getAttribute('id'); if (id) bodyId.set(id, b.el); let p = b.el.parentNode; while (p && p !== body) { const pid = (p as Element).getAttribute?.('id'); if (pid && !bodyId.has(pid)) bodyId.set(pid, b.el); p = p.parentNode; } }
     if (body.getAttribute('id') && blocks[0]) bodyId.set(body.getAttribute('id')!, blocks[0].el);
     const sectionTitle = declaredSectionTitle(body);
-    return { href, index, parseable: true, blocks, bodyId, ...(sectionTitle ? { sectionTitle } : {}) };
-  } catch { return { href, index, parseable: false, blocks: [], bodyId: new Map() }; }
+    return { href, index, parseable: true, blocks, bodyId, references, ...(sectionTitle ? { sectionTitle } : {}) };
+  } catch (error) { if (error instanceof BilingualFormatError) throw error; return { href, index, parseable: false, blocks: [], bodyId: new Map() }; }
 }
 
 interface TocEntry { source: 'nav' | 'ncx'; path: string; label: string; href: string; fragment: string | null }
@@ -163,6 +170,13 @@ export async function importEpub(store: ProjectStore, fileName: string, data: Ui
     const tocStats = store.db.get<{ total: number; mapped: number }>('SELECT COUNT(*) total, SUM(CASE WHEN heading_block_id IS NOT NULL THEN 1 ELSE 0 END) mapped FROM toc_entries WHERE archive_id=?', [existing.id]);
     const zip = await JSZip.loadAsync(data);
     const manifest = await readManifest(zip);
+    if (!Object.keys(store.archives.referenceTranslations(existing.volume_id)).length) {
+      for (let i = 0; i < manifest.spine.length; i++) {
+        opts.signal?.throwIfAborted();
+        const item = await parseSpineItem(zip, manifest.spine[i]!.href, i);
+        if (item.references?.size) throw new BilingualFormatError('这本双语书曾按旧方式导入，不能复用混合正文。请先备份已有稿件，再从书架删除这一本并重新导入；其他书不受影响。');
+      }
+    }
     const tocEntries = await readToc(zip, manifest);
     const missingTocResources = [...new Set(tocEntries.filter(t => t.href.trim().length > 0 && !zip.file(t.href)).map(t => t.href))];
     return commitImportResult(store, opts, { seriesId, volumeId: existing.volume_id, archiveId: existing.id, chapters, paragraphs, blocks, unparseable, missingTocResources, tocMapped: tocStats?.mapped ?? 0, tocTotal: tocStats?.total ?? 0, reusedExisting: true });
@@ -175,6 +189,17 @@ export async function importEpub(store: ProjectStore, fileName: string, data: Ui
     spineItems.push(await parseSpineItem(zip, m.spine[i]!.href, i));
   }
   const toc = await readToc(zip, m);
+  if (spineItems.some(si=>!!si.references?.size)) {
+    // Paired bilingual source has auxiliary publisher/translator/TOC pages too.
+    // Unlabelled separate pages are retained in the archive/export, not guessed
+    // to be Japanese story prose. Explicitly Japanese pages remain available.
+    for (const si of spineItems) if (!si.references?.size) {
+      si.retainedAppendix=new Set();
+      for (const b of si.blocks) if (!/^(?:ja)(?:-|$)/i.test((b.el.getAttribute('lang')||b.el.getAttribute('xml:lang')||'').trim())) {
+        b.protocol='untranslatable';si.retainedAppendix.add(b.el);
+      }
+    }
+  }
   // A spine item is a packaging fragment, not necessarily a chapter. Resolve
   // actual navigation targets first; EPUB3 nav wins duplicate NCX targets.
   const chapterStarts = new Map<Element, string>();
@@ -182,10 +207,11 @@ export async function importEpub(store: ProjectStore, fileName: string, data: Ui
     if (!t.label.trim()) continue;
     const si = spineItems.find(s => s.href === t.href && s.parseable);
     if (!si) continue;
-    const target = t.fragment ? si.bodyId.get(t.fragment) : si.blocks.find(b => b.protocol !== 'untranslatable' && b.visibleText.trim())?.el;
+    let target = t.fragment ? si.bodyId.get(t.fragment) : si.blocks.find(b => b.protocol !== 'untranslatable' && b.visibleText.trim())?.el;
+    if (target && si.references?.has(target)) target = si.references.get(target)!.el;
     if (target && !chapterStarts.has(target)) {
       const heading = si.blocks.find(b => b.el === target && /^h[1-6]$/.test(localName(b.el)));
-      chapterStarts.set(target, heading?.visibleText.trim() || t.label.trim());
+      chapterStarts.set(target, heading?.visibleText.trim() || (si.references?.size && !/[ぁ-んァ-ヶ]/u.test(t.label) ? '正文' : t.label.trim()));
     }
   }
 
@@ -213,10 +239,10 @@ export async function importEpub(store: ProjectStore, fileName: string, data: Ui
     for (const si of spineItems) {
       const spineItemId = store.archives.addSpineItem(archiveId, si.href, si.index, si.parseable);
       if (!si.parseable) { unparseable.push(si.href); continue; }
-      const translatable = si.blocks.filter(b => b.protocol !== 'untranslatable' && b.visibleText.trim().length > 0);
+      const translatable = si.blocks.filter(b => !si.references?.has(b.el) && b.protocol !== 'untranslatable' && b.visibleText.trim().length > 0);
       const elMap = new Map<Element, string>(); blockIdByHrefAndEl.set(si.href, elMap);
       if (translatable.length === 0) {
-        for (const b of si.blocks) store.archives.addBlock({ spine_item_id: spineItemId, paragraph_id: null, xpath: b.xpath, block_hash: hashVisible(b.visibleText), block_type: b.blockType, protocol: 'untranslatable', inline_template: JSON.stringify(b.template), source_text: b.visibleText });
+        for (const b of si.blocks) store.archives.addBlock({ spine_item_id: spineItemId, paragraph_id: null, xpath: b.xpath, block_hash: hashVisible(b.visibleText), block_type: si.retainedAppendix?.has(b.el) ? 'bilingual-appendix' : b.blockType, protocol: 'untranslatable', inline_template: JSON.stringify(b.template), source_text: b.visibleText });
         continue;
       }
       // When a document has no resolved TOC entry, an explicit opening heading
@@ -227,11 +253,16 @@ export async function importEpub(store: ProjectStore, fileName: string, data: Ui
       let pendingTitle: string | null = null;
 
       for (const b of si.blocks) {
+        const referenceFor = si.references?.get(b.el);
+        if (referenceFor) {
+          store.archives.addBlock({ spine_item_id: spineItemId, paragraph_id: null, xpath: b.xpath, block_hash: hashVisible(b.visibleText), block_type: REFERENCE_BLOCK, protocol: 'untranslatable', inline_template: JSON.stringify({ referenceXpath: referenceFor.xpath }), source_text: b.visibleText });
+          continue;
+        }
         if (chapterStarts.has(b.el)) pendingTitle = chapterStarts.get(b.el)!;
         const hash = hashVisible(b.visibleText);
         const isBreak = SCENE_BREAK_RE.test(b.visibleText) && b.visibleText.trim().length > 0;
         if (b.protocol === 'untranslatable' || b.visibleText.trim().length === 0) {
-          const id = store.archives.addBlock({ spine_item_id: spineItemId, paragraph_id: null, xpath: b.xpath, block_hash: hash, block_type: b.blockType, protocol: 'untranslatable', inline_template: JSON.stringify(b.template), source_text: b.visibleText });
+          const id = store.archives.addBlock({ spine_item_id: spineItemId, paragraph_id: null, xpath: b.xpath, block_hash: hash, block_type: si.retainedAppendix?.has(b.el) ? 'bilingual-appendix' : b.blockType, protocol: 'untranslatable', inline_template: JSON.stringify(b.template), source_text: b.visibleText });
           elMap.set(b.el, id);
           if (isBreak && sceneHasContent && chapterId) { sceneOrdinal++; sceneId = store.projects.createScene(chapterId, sceneOrdinal); paraOrdinal = 0; sceneHasContent = false; }
           continue;
@@ -254,11 +285,11 @@ export async function importEpub(store: ProjectStore, fileName: string, data: Ui
       let headingBlockId: string | null = null;
       const si = spineItems.find(s => s.href === t.href);
       if (si) {
-        if (t.fragment) { const el = si.bodyId.get(t.fragment); if (el) headingBlockId = blockIdByHrefAndEl.get(t.href)?.get(el) ?? null; }
+        if (t.fragment) { const el = si.bodyId.get(t.fragment); if (el) headingBlockId = blockIdByHrefAndEl.get(t.href)?.get(si.references?.get(el)?.el ?? el) ?? null; }
         if (!headingBlockId) {
           const norm = t.label.replace(/\s+/g, '');
           const match = si.blocks.find(b => b.visibleText.replace(/\s+/g, '') === norm);
-          headingBlockId = match ? (blockIdByHrefAndEl.get(t.href)?.get(match.el) ?? null) : null;
+          headingBlockId = match ? (blockIdByHrefAndEl.get(t.href)?.get(si.references?.get(match.el)?.el ?? match.el) ?? null) : null;
         }
         if (!headingBlockId && !t.fragment) headingBlockId = firstBlockIdByHref.get(t.href) ?? null;
       }

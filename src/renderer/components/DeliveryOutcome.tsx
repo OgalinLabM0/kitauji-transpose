@@ -1,48 +1,66 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { SeriesDeliveryState } from '@shared/ipc';
 import { api } from '../api';
-import { useApp, tryApi } from '../store/app';
+import { useApp } from '../store/app';
 import { draftIdentity } from '../store/draftIdentityBridge';
 import { SeriesExportDialog } from '../features/workbench/SeriesExportDialog';
+import { DeliveryCommand } from '../features/workbench/DeliveryCommand';
+import { TaskOverview } from '../features/workbench/TaskOverview';
+import { Modal } from './ui';
 
-/** Keep the final step reachable after a decision closes the original task dialog. */
+/** One persistent task area, shared by the manuscript, decisions and logs. */
 export function DeliveryOutcome() {
-  const { series, rev, progress, page, currentSeriesId } = useApp();
+  const { series, rev, progress, currentSeriesId } = useApp();
   const identity = useSyncExternalStore(draftIdentity.subscribe, draftIdentity.snapshot);
   const scope = JSON.stringify(series.map(s => s.id));
-  const key = JSON.stringify([identity.token, scope, rev.series, progress.running]);
-  const [loaded, setLoaded] = useState<{ key: string; state: SeriesDeliveryState | null } | null>(null);
-  const [error, setError] = useState(false);
+  const key = JSON.stringify([identity.token, scope, rev.series, rev.queue, progress.running]);
+  const [discoveryError, setDiscoveryError] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [chosen, setChosen] = useState<string | null>(null);
+  useEffect(() => { if (progress.running) setChosen(null); }, [progress.running]);
+  const [loaded, setLoaded] = useState<{ key: string; states: SeriesDeliveryState[] } | null>(null);
   const [opened, setOpened] = useState<{ seriesId: string; token: string } | null>(null);
+  const [overview, setOverview] = useState<{ volumeId: string; token: string } | null>(null);
   useEffect(() => {
-    let live = true; setError(false);
-    if (identity.status !== 'ready' || progress.running) return;
-    void Promise.all(series.map(async s => {
-      const state = await api.workflow.deliveryState(s.id);
-      return state?.seriesId === s.id && state.status !== 'running' ? state : null;
-    })).then(states => {
-      if (live && draftIdentity.isCurrent(identity.token)) setLoaded({ key, state: states.filter((s): s is SeriesDeliveryState => !!s).sort((a,b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null });
-    }).catch(() => { if (live && draftIdentity.isCurrent(identity.token)) setError(true); });
-    return () => { live = false; };
+    let live = true; setDiscoveryError(false);
+    let reading = false;
+    let foundRunning = false;
+    if (identity.status !== 'ready') return;
+    const read = async () => {
+      if (reading || foundRunning) return;
+      reading = true;
+      try {
+        const states = await Promise.all(series.map(async s => {
+          const state = await api.workflow.deliveryState(s.id);
+          return state?.seriesId === s.id ? state : null;
+        }));
+        if (live && draftIdentity.isCurrent(identity.token)) {
+          const valid = states.filter((s): s is SeriesDeliveryState => !!s);
+          setLoaded({ key, states: valid });
+          foundRunning = progress.running && valid.some(s => s.status === 'running');
+        }
+      } catch { if (live && draftIdentity.isCurrent(identity.token)) setDiscoveryError(true); }
+      finally { reading = false; }
+    };
+    void read();
+    const timer = progress.running ? setInterval(() => void read(), 1500) : undefined;
+    return () => { live = false; if (timer) clearInterval(timer); };
   }, [key, retry]);
-  const state = loaded?.key === key && !error && !progress.running ? loaded.state : null;
-  const title = series.find(s => s.id === state?.seriesId)?.title;
-  const done = state?.status === 'done' && state.result?.ok && state.result.outputPath === state.outputPath;
-  const view = () => { if (state && draftIdentity.isCurrent(identity.token)) { useApp.getState().selectSeries(state.seriesId); setOpened({ seriesId: state.seriesId, token: identity.token }); } };
+  const states = loaded?.key === key ? loaded.states : [];
+  const active = progress.running ? states.find(s => s.status === 'running') : null;
+  const latest = [...states].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  const seriesId = active?.seriesId ?? (chosen && series.some(s => s.id === chosen) ? chosen : null) ?? latest?.seriesId ?? currentSeriesId;
+  if (identity.status !== 'ready' || !seriesId || !series.some(s => s.id === seriesId)) return null;
   return <>
-    {error && !progress.running && <div role="alert" className="small">暂时无法读取保存任务。<button className="btn btn-text btn-sm" onClick={() => setRetry(n => n + 1)}>重试读取任务</button></div>}
-    {state && title && !(page === 'workbench' && currentSeriesId === state.seriesId) && <section className="delivery-outcome-bar" aria-label="保存任务结果">
-      <strong>{title} · {done ? '成品已保存' : state.status === 'stopped' ? '任务已停止' : '任务需要处理'}</strong>
-      <details><summary>详情</summary><p className="small">{state.message}</p></details>
-      {done && <button className="btn btn-primary btn-sm" onClick={() => void tryApi(async () => {
-        const latest = await api.workflow.deliveryState(state.seriesId);
-        if (!draftIdentity.isCurrent(identity.token)) return;
-        if (latest?.seriesId !== state.seriesId || latest.status !== 'done' || !latest.result?.ok || latest.outputPath !== state.outputPath || latest.result.outputPath !== state.outputPath || latest.updatedAt !== state.updatedAt) { setLoaded(null); setRetry(n => n + 1); return; }
-        await api.files.showInFolder(latest.outputPath);
-      })}>打开保存位置</button>}
-      <button className="btn btn-secondary btn-sm" onClick={view}>{done ? '查看保存详情' : '查看原因与继续'}</button>
-    </section>}
-    {opened && opened.token === identity.token && identity.status === 'ready' && series.some(s => s.id === opened.seriesId) && <SeriesExportDialog key={`${opened.token}:${opened.seriesId}`} seriesId={opened.seriesId} autoProcess onClose={() => setOpened(null)} />}
+    {discoveryError ? <div role="alert" className="task-discovery-error">暂时无法读取保存任务，已有进度保留。<button className="btn btn-secondary btn-sm" onClick={() => setRetry(n => n + 1)}>重试读取任务</button></div> : <>
+    {!progress.running && currentSeriesId && seriesId !== currentSeriesId && <div className="task-scope-switch"><span>上次任务的进度和结果</span><button className="btn btn-text btn-sm" onClick={() => setChosen(currentSeriesId)}>处理当前作品</button></div>}
+    <DeliveryCommand key={identity.token + ':' + seriesId} seriesId={seriesId}
+      onSetup={() => setOpened({ seriesId, token: identity.token })}
+      onDetails={volumeId => {
+        const id = volumeId ?? series.find(s => s.id === seriesId)?.volumes[0]?.id;
+        if (id) setOverview({ volumeId: id, token: identity.token });
+      }} /></>}
+    {opened && opened.token === identity.token && series.some(s => s.id === opened.seriesId) && <SeriesExportDialog key={opened.token + ':' + opened.seriesId} seriesId={opened.seriesId} autoProcess onClose={() => setOpened(null)} />}
+    {overview && overview.token === identity.token && series.some(s => s.volumes.some(v => v.id === overview.volumeId)) && <Modal title="任务详情" width={760} onClose={() => setOverview(null)}><TaskOverview volumeId={overview.volumeId} onNavigate={() => setOverview(null)} /></Modal>}
   </>;
 }
