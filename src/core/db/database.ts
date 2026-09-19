@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { SCHEMA_DDL, SCHEMA_VERSION } from './schema';
 import { inspectDatabaseVersion, snapshotBeforeMigration } from './databaseSafety';
@@ -18,6 +18,16 @@ export const fromJson = <T>(v: unknown, fallback: T): T => {
 export class Db {
   readonly raw: DatabaseSync;
   private depth = 0;
+  private statements = new Map<string, StatementSync>();
+  private statement(sql: string): StatementSync {
+    let statement = this.statements.get(sql);
+    if (!statement) {
+      statement = this.raw.prepare(sql);
+      if (this.statements.size >= 256) this.statements.delete(this.statements.keys().next().value!);
+      this.statements.set(sql, statement);
+    }
+    return statement;
+  }
 
   readonly migrationBackupPath: string | null;
   constructor(readonly path: string, options: { readOnly?: boolean } = {}) {
@@ -155,14 +165,14 @@ export class Db {
   }
 
   run(sql: string, params: readonly Param[] = []): { changes: number } {
-    const r = this.raw.prepare(sql).run(...(params as Param[]));
+    const r = this.statement(sql).run(...(params as Param[]));
     return { changes: Number(r.changes) };
   }
   get<T extends object = Row>(sql: string, params: readonly Param[] = []): T | undefined {
-    return this.raw.prepare(sql).get(...(params as Param[])) as T | undefined;
+    return this.statement(sql).get(...(params as Param[])) as T | undefined;
   }
   all<T extends object = Row>(sql: string, params: readonly Param[] = []): T[] {
-    return this.raw.prepare(sql).all(...(params as Param[])) as T[];
+    return this.statement(sql).all(...(params as Param[])) as T[];
   }
   transaction<T>(fn: () => T): T {
     if (this.depth > 0) { this.depth++; try { return fn(); } finally { this.depth--; } }
@@ -171,5 +181,5 @@ export class Db {
     catch (e) { this.raw.exec('ROLLBACK'); throw e; }
     finally { this.depth = 0; }
   }
-  close(): void { this.raw.close(); }
+  close(): void { this.statements.clear(); this.raw.close(); }
 }

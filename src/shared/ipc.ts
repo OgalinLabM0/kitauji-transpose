@@ -42,6 +42,7 @@ export interface SeriesRunState {
   usage: Pick<RunUsage, 'inputTokens' | 'outputTokens' | 'unknownUsageRequests'>;
 }
 export interface VolumeRunState {
+  step?: import('./types').WorkflowTaskStep | null;
   detail?: import('./types').WorkflowStepProgress | null;
   usage?: RunUsage; requestLimit?: number; stopReason?: string | null;
   volumeId: string; status: 'running' | 'stopped' | 'attention' | 'done';

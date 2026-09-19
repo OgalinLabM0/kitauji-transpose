@@ -38,6 +38,13 @@ import { auditStatus } from './auditReceipts';
 import { runQualityGate } from './qualityGate';
 import { missingTermProposals } from './termPreparation';
 
+const preparationSteps = ['人物与事件预读', '术语提取', '术语核对与确认', '人物资料核对', '场景分析', '字段归属核对', '称呼扫描', '称呼与语癖核对'];
+const translationSteps = ['翻译与逐段检查', '新发现的称呼与复核', '跨段与跨章核查及修复', '章节连读检查及修复', '成品检查'];
+const taskStep = (stage: 'preparation' | 'translation', index: number) => {
+  const steps = stage === 'preparation' ? preparationSteps : translationSteps;
+  return { stage, index, total: steps.length, label: steps[index - 1]! };
+};
+
 const key = (volumeId: string) => `volume-run:${volumeId}`;
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function volumeRunState(store: ProjectStore, volumeId: string): VolumeRunState | null {
@@ -76,9 +83,9 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
   const sourceHash = () => hash(ids.map(pid => store.projects.getParagraph(pid)));
   const sourceAtStart = sourceHash();
   const prior = volumeRunState(store, volumeId);
-  let state: VolumeRunState = { volumeId, status: 'running', phase: 'preread', done: 0, total: ids.length, message: '准备本册任务', updatedAt: nowIso(), scanKey: prior?.scanKey ?? null, stopReason: null };
+  let state: VolumeRunState = { volumeId, status: 'running', step: taskStep('preparation', 1), phase: 'preread', done: 0, total: ids.length, message: '准备本册任务', updatedAt: nowIso(), scanKey: prior?.scanKey ?? null, stopReason: null };
   const publish = (patch: Partial<VolumeRunState>, admission = false) => {
-    const next = { ...state, ...(patch.phase && patch.phase !== state.phase ? { detail: null } : {}), ...patch, updatedAt: nowIso() };
+    const next = { ...state, ...((patch.phase && patch.phase !== state.phase) || (patch.step && (patch.step.stage !== state.step?.stage || patch.step.index !== state.step?.index)) ? { detail: null } : {}), ...patch, updatedAt: nowIso() };
     if (next.phase === 'translate') next.detail = { phase: 'translate', label: '翻译与逐段检查', done: next.done, total: next.total, unit: '段' };
     const persistAndNotify = () => {
       store.db.run('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', [key(volumeId), JSON.stringify(next)]);
@@ -139,16 +146,21 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
     assertAcceptedChangeSources(store.db, seriesId);
     const refreshed = refreshAutomaticSources(store, seriesId);
     if (refreshed.blocked) return attention(`有 ${refreshed.blocked} 项自动知识来源已变化且存在后续修改，请先核对较新的决定，原数据已保留`);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    check();
     for (const [kind, phase, action] of [['preread', 'preread', operations.preRead], ['terms', 'terms', operations.terms]] as const) {
       let doneChapters = store.projects.prepDoneChapters(kind, volumeId);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      check();
       const missing = chapters.filter(cid => !doneChapters.has(cid));
       const needsTermProposals = kind === 'terms' && (missing.length > 0 || missingTermProposals(store, volumeId).length > 0);
-      begin({ phase, message: kind === 'preread' ? `预读：补齐 ${missing.length} 章` : `术语：补齐 ${missing.length} 章` });
+      begin({ step: taskStep('preparation', kind === 'preread' ? 1 : 2), phase, message: kind === 'preread' ? `预读：补齐 ${missing.length} 章` : `术语：补齐 ${missing.length} 章` });
       if (kind === 'preread') {
         for (const cid of chapters) {
           check();
           if (!doneChapters.has(cid)) {
             await action([cid]);
+            check();
             doneChapters = store.projects.prepDoneChapters(kind, volumeId);
           }
           check();
@@ -156,12 +168,13 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
         }
       } else if (needsTermProposals) {
         await action(missing);
+        check();
         doneChapters = store.projects.prepDoneChapters(kind, volumeId);
       }
       check();
       if (chapters.some(cid => !doneChapters.has(cid))) return attention('部分章节准备失败，修复后继续会只补未完成章');
     }
-    begin({ phase: 'knowledge', message: '独立核对本册新术语候选及原文证据' });
+    begin({ phase: 'knowledge', step: taskStep('preparation', 3), message: '独立核对本册新术语候选及原文证据' });
     await resolveTermProposals(store, ai, volumeId, opts.signal);
     check();
     const termInVolume = termReviewMatcher(store, volumeId);
@@ -169,7 +182,7 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
     if (pendingTermProposals.length) return attention(`有 ${pendingTermProposals.length} 项术语译名待用户确认，确认后继续处理本册`);
     // Resolve source-only character observations before scenes depend on them.
     // Otherwise adopting a field immediately invalidates the scene just built.
-    begin({ phase: 'knowledge', message: '核对人物观察与旧记录' });
+    begin({ phase: 'knowledge', step: taskStep('preparation', 4), message: '核对人物观察与旧记录' });
     await reviewInitialFields(store,ai,volumeId,opts.signal);
     check();
     await resolveCharacterKnowledge(store,ai,volumeId,opts.signal);
@@ -178,21 +191,21 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
     await reviewCharacterInvalidations(store,ai,volumeId,opts.signal);
     await reviewRelationshipTerminations(store,ai,volumeId,opts.signal);
     check();
-    begin({ phase: 'scenes', message: '检查现有场景分析' });
+    begin({ phase: 'scenes', step: taskStep('preparation', 5), message: '检查现有场景分析' });
     const missingScenes = ids.filter(pid => !store.projects.sceneObservation(pid));
     begin({ phase: 'scenes', message: `场景分析：补齐 ${missingScenes.length} 段` });
     if (missingScenes.length) await operations.scenes(missingScenes);
     check();
     if (ids.some(pid => !store.projects.sceneObservation(pid))) return attention('部分段落场景分析缺失或已因原文变化失效，请重试');
-    begin({ phase: 'knowledge', message: '独立核对待定字段的原文归属' });
+    begin({ phase: 'knowledge', step: taskStep('preparation', 6), message: '独立核对待定字段的原文归属' });
     await reviewFieldAttributions(store, ai, volumeId, opts.signal);
     check();
     const scanKey = hash([sourceAtStart, PROMPT_VERSION, [...store.projects.analysesFor(ids).values()], store.knowledge.listCharacters(seriesId)]);
     if (state.scanKey !== scanKey) {
-      begin({ phase: 'honorifics', message: '核对首次称谓与角色方向' });
+      begin({ phase: 'honorifics', step: taskStep('preparation', 7), message: '核对首次称谓与角色方向' });
       await operations.honorifics(); check(); publish({ scanKey });
     }
-    begin({ phase: 'knowledge', message: '核对称谓方向与待定人物知识' });
+    begin({ phase: 'knowledge', step: taskStep('preparation', 8), message: '核对称谓方向与待定人物知识' });
     await resolveAddressProposals(store, ai, volumeId, opts.signal);
     check();
     resolveParagraphLiteralAddresses(store,volumeId);
@@ -210,7 +223,7 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
     // Translation uses the validated Japanese facts. Display-only Chinese
     // summaries are generated by the existing on-demand material-page action;
     // they must not consume the manuscript run's time and request budget.
-    begin({ phase: 'translate', done: 0, message: '翻译缺稿，复核旧稿，跳过仍然有效的已验稿' });
+    begin({ phase: 'translate', done: 0, step: taskStep('translation', 1), message: '翻译缺稿，复核旧稿，跳过仍然有效的已验稿' });
     const pendingRechecks = new Set(store.translations.pendingRechecks(ids).map(r => r.paragraph_id));
     let failedParagraphs = 0;
     for (const [index, pid] of ids.entries()) {
@@ -240,26 +253,26 @@ export async function runVolumeFlow(store: ProjectStore, ai: AiClient, volumeId:
       if (failedParagraphs >= 3) { publish({ stopReason: 'paragraph-failures' }); return attention('连续3段未通过验收，已停止后续处理；保留当前稿件与问题，检查后可继续'); }
     }
     // Translation may discover forms absent from the initial preparation pass.
-    begin({ phase: 'knowledge', message: '核对翻译中新发现的称呼，保留无法确定的方向' });
+    begin({ phase: 'knowledge', step: taskStep('translation', 2), message: '核对翻译中新发现的称呼，保留无法确定的方向' });
     await resolveAddressProposals(store, ai, volumeId, opts.signal); check();
     await resolveParagraphAddressProposals(store, ai, volumeId, opts.signal); check();
     for (const pid of new Set(store.translations.pendingRechecks(ids).map(r=>r.paragraph_id))) {
       await reverifyAutomatically(pid); check();
     }
-    begin({ phase: 'trajectory', message: '核对跨段／跨章术语、人物声音与前后承接' });
+    begin({ phase: 'trajectory', step: taskStep('translation', 3), message: '核对跨段／跨章术语、人物声音与前后承接' });
     check();
     await reviewVolumeTrajectory(store, ai, volumeId, opts.signal, (done, total) => begin({ detail: { phase: 'trajectory', label: '跨段与跨章核查', done, total, unit: '组' }, message: `跨段／跨章核查：${done}/${total} 组` }));
     check();
-    begin({ message: '尝试修复有明确证据的跨章问题，保留人工稿与不确定项' });
+    begin({ detail: null, message: '尝试修复有明确证据的跨章问题，保留人工稿与不确定项' });
     await repairTrajectoryIssues(store, ai, volumeId, opts.signal);
     check();
-    begin({ message: '章级连续阅读：独立核对相邻句群，不改写正文' });
+    begin({ step: taskStep('translation', 4), message: '章级连续阅读：独立核对相邻句群，不改写正文' });
     await reviewChapterReading(store, ai, volumeId, opts.signal, (done, total) => begin({ detail: { phase: 'trajectory', label: '章节连读检查', done, total, unit: '组' }, message: `章级连续阅读：${done}/${total} 组；失效结果重新核查` }));
     check();
-    begin({ message: '核对章级问题的原文依据，必要时定点修复并完整复验' });
+    begin({ detail: null, message: '核对章级问题的原文依据，必要时定点修复并完整复验' });
     await repairChapterReadingIssues(store, ai, volumeId, opts.signal);
     check();
-    begin({ phase: 'delivery', message: '检查整册交付条件' });
+    begin({ phase: 'delivery', step: taskStep('translation', 5), message: '检查整册交付条件' });
     check();
     const report = runQualityGate(store, volumeId);
     if (!report.ok) return attention(`处理已结束，仍有 ${report.blockers.reduce((n, b) => n + b.count, 0)} 条交付阻断记录；请查看复核和导出检查`);

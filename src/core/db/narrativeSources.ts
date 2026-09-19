@@ -33,20 +33,34 @@ function content(db: Db, kind: NarrativeKind, id: string) {
   return facts;
 }
 
+export interface NarrativeBinding { kind: NarrativeKind; id: string; ids: string[]; dependencyIds?: string[] }
 export function bindNarrativeSources(db: Db, kind: NarrativeKind, id: string, ids: string[], dependencyIds: string[] = []): void {
-  const row = content(db, kind, id), snapshot = sources(db, ids);
-  if (!row || !ids.length || snapshot.some(p => !p || p.series_id !== row.series_id)) return;
-  const narrativeMemo = new Map<string, boolean>();
-  const dependencies = withIdentityRead(db, () => [...new Set(dependencyIds)].map(dependencyId => {
-    const event = content(db, 'event', dependencyId);
-    if (!event || event.series_id !== row.series_id || Number(event.at_para) >= Math.min(...snapshot.map(p => Number(p!.series_ordinal))) || !narrativeSourceCurrent(db, 'event', dependencyId, narrativeMemo)) throw new Error('预读背景依据已变化，不能保存旧结果');
-    return { id: dependencyId, fingerprint: proofFingerprint(db, dependencyId) };
-  }));
-  db.run('INSERT OR REPLACE INTO narrative_provenance(kind,record_id,series_id,source_ids,source_hash,content_hash,contract,superseded) VALUES(?,?,?,?,?,?,?,0)',
-    [kind, id, String(row.series_id), JSON.stringify({ ids: [...new Set(ids)].sort(), dependencies, identities: currentIdentityDependencies(db, String(row.series_id), Math.min(...snapshot.map(p => Number(p!.series_ordinal)))) }), hash(snapshot), hash(row), preparationContract('preread')]);
+  bindNarrativeBatch(db, [{ kind, id, ids, dependencyIds }]);
+}
+/** Validate the shared ancestry once, before any proof writes. No callback or
+ * await can mutate evidence between validation and commit; failure is atomic. */
+export function bindNarrativeBatch(db: Db, bindings: NarrativeBinding[]): void {
+  db.transaction(() => {
+    const targets = new Set(bindings.filter(b => b.kind === 'event').map(b => b.id));
+    const prepared = withIdentityRead(db, () => bindings.map(({ kind, id, ids, dependencyIds = [] }) => {
+      const row = content(db, kind, id), snapshot = sources(db, ids);
+      if (!row || !ids.length || snapshot.some(p => !p || p.series_id !== row.series_id)) return null;
+      const before = Math.min(...snapshot.map(p => Number(p!.series_ordinal)));
+      const dependencies = [...new Set(dependencyIds)].map(dependencyId => {
+        const event = content(db, 'event', dependencyId);
+        if (targets.has(dependencyId) || !event || event.series_id !== row.series_id || Number(event.at_para) >= before || !narrativeSourceCurrent(db, 'event', dependencyId)) throw new Error('预读背景依据已变化，不能保存旧结果');
+        return { id: dependencyId, fingerprint: proofFingerprint(db, dependencyId) };
+      });
+      return [kind, id, String(row.series_id), JSON.stringify({ ids: [...new Set(ids)].sort(), dependencies, identities: currentIdentityDependencies(db, String(row.series_id), before) }), hash(snapshot), hash(row), preparationContract('preread')];
+    }));
+    for (const values of prepared) if (values) db.run('INSERT OR REPLACE INTO narrative_provenance(kind,record_id,series_id,source_ids,source_hash,content_hash,contract,superseded) VALUES(?,?,?,?,?,?,?,0)', values);
+  });
 }
 
 export function narrativeSourceCurrent(db: Db, kind: NarrativeKind, id: string, memo = new Map<string, boolean>()): boolean {
+  // A direct caller needs the same synchronous scope as collection readers.
+  // Otherwise identity proofs recursively re-walk the event ancestry separately.
+  if (!activeProofReadMemo(db)) return withIdentityRead(db, () => narrativeSourceCurrent(db, kind, id, memo));
   memo = activeProofReadMemo(db) ?? memo;
   // Iterative DFS avoids call-stack growth across long books. Cache lasts only for this read.
   const tasks: { kind: NarrativeKind; id: string; finish?: Dependency[] }[] = [{ kind, id }];

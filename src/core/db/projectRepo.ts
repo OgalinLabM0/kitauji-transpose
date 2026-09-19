@@ -1,3 +1,4 @@
+import { withIdentityRead } from './identitySources';
 import {foreignNoteTexts} from '../workflow/foreignNotes';
 import { preReadInputsCurrent } from './narrativeSources';
 import { sceneIdentitySignature } from './sceneIdentityProof';
@@ -40,6 +41,7 @@ export class ProjectRepo {
   }
   clearPrepDone(kind: 'preread' | 'terms', chapterIds: string[]): void { for (const c of chapterIds) this.db.run('DELETE FROM meta WHERE key=?', [`prep:${kind}:${c}`]); }
   prepDoneChapters(kind: 'preread' | 'terms', volumeId: string): Set<string> {
+    return withIdentityRead(this.db, () => {
     const ids = this.listChapters(volumeId).map(c => c.id);
     const done = new Set<string>();
     for (const c of ids) {
@@ -48,6 +50,7 @@ export class ProjectRepo {
       if (proof.version === 1 && preparationContractAccepted(kind, proof.contract) && proof.source === this.chapterSourceSignature(c) && (kind !== 'preread' || preReadInputsCurrent(this.db, c))) done.add(c);
     }
     return done;
+    });
   }
 
   deleteSeries(id: string): void {

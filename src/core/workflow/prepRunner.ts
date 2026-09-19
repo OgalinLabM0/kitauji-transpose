@@ -5,7 +5,7 @@ import { termProposalContext } from './termProposalContext';
 import { sceneNameCandidates, sceneNameCandidateSourceIds } from './sceneNameCandidates';
 import { knownNameIdentities, preReadIdentityInput, withIdentityDependencies, withIdentityRead, type BackgroundIdentityEvent } from '../db/identitySources';
 import { supersedeChangeCandidates } from '../db/knowledgeChanges';
-import { bindNarrativeSources, supersedeNarrativeBatch, preReadBackground, eventSourceFingerprint } from '../db/narrativeSources';
+import { bindNarrativeBatch, type NarrativeBinding, supersedeNarrativeBatch, preReadBackground, eventSourceFingerprint } from '../db/narrativeSources';
 import { splitPreRead } from './splitPreRead';
 /**
  * 预处理工位 runner（docs/设计/PLAN_历史架构.md 第 5 节 / REVIEW_ROUTING 第 1 节”翻译前”）。
@@ -66,6 +66,7 @@ export class PrepRunner {
     const failedChapters: string[] = [];
     try {
       for (const ch of chapters) {
+        await new Promise<void>(resolve => setImmediate(resolve));
         this.check();
         const chapterSource = this.store.projects.chapterSourceSignature(ch.id);
         const checkpoint = new PreReadCheckpoint(this.store, ch.id, this.store.projects.prepDoneChapters('preread', volumeId).has(ch.id));
@@ -80,6 +81,7 @@ export class PrepRunner {
         this.emit({ detail: detail(), message: `预读「${chapterLabel}」：开始，已核对 0/${paras.length} 段` });
         const work: typeof paras[] = chunkByChars(paras, Math.min(this.opts.chapterBatchChars ?? 3000, 3000), 32);
         while (work.length) {
+          await new Promise<void>(resolve => setImmediate(resolve));
           const remaining = work.shift()!;
           this.check();
           const done = checkpoint.doneMany(remaining);
@@ -97,27 +99,30 @@ export class PrepRunner {
           if (boundary > 0) work.unshift(remaining);
           const batchText = batch.map(p => p.sourceText).join('\n');
           // Extraction gets source-only, bounded context: no later character state or Chinese drafts.
+          const { background, identities, knownNames, identityInput } = withIdentityRead(this.store.db, () => {
           const background = preReadBackground(this.store.db, seriesId, batch[0]!.seriesOrdinal);
           const backgroundEvents: BackgroundIdentityEvent[] = background.events.map(e => ({ id: e.id, atPara: e.at_para, fingerprint: eventSourceFingerprint(this.store.db, e.id) }));
           const identities = knownNameIdentities(this.store.db, seriesId, batch[0]!.seriesOrdinal, batchText, background.events.map(e => e.summary_jp).join('\n'));
           const knownNames = identities.map(d => d.name).sort();
           const identityInput = preReadIdentityInput(this.store.db, seriesId, batch[0]!.seriesOrdinal, batch.map(p => p.id), backgroundEvents);
+          return { background, identities, knownNames, identityInput };
+          });
           const user = JSON.stringify({
             known_names: knownNames,
             previous_events: background.events.map(e => ({ at_para: e.at_para, summary_jp: e.summary_jp })),
             paragraphs: batch.map(p => ({ id: p.id, seriesOrdinal: p.seriesOrdinal, source: visibleNameSource(p.sourceText) })),
           });
-          const checkBatch = () => {
+          const checkBatch = () => withIdentityRead(this.store.db, () => {
             this.check();
             const currentBackground = preReadBackground(this.store.db, seriesId, batch[0]!.seriesOrdinal);
             const currentIdentities = knownNameIdentities(this.store.db, seriesId, batch[0]!.seriesOrdinal, batchText, currentBackground.events.map(e => e.summary_jp).join('\n'));
             if (JSON.stringify(currentIdentities) !== JSON.stringify(identities)) throw new Error('预读姓名依据在调用期间已变化，请继续本册重新核对');
-            if (preReadBackground(this.store.db, seriesId, batch[0]!.seriesOrdinal).signature !== background.signature) throw new Error('预读背景依据在调用期间已变化，旧结果未写入，请继续本册重试');
+            if (currentBackground.signature !== background.signature) throw new Error('预读背景依据在调用期间已变化，旧结果未写入，请继续本册重试');
           if (batch.some(p => {
             const current = this.store.projects.getParagraph(p.id);
             return !current || current.sourceText !== p.sourceText || current.seriesOrdinal !== p.seriesOrdinal || current.chapterId !== p.chapterId || current.paragraphType !== p.paragraphType;
           })) throw new Error('预读原文或段落位置在调用期间已变化，旧结果未写入，请继续本册重新核对');
-          };
+          });
           let out: PreReadOutput;
           try { out = await splitPreRead(this.ai, user, batch, knownNames, checkBatch, this.opts.signal, label => this.emit({ detail: detail(label), message: `${label} · ${chapterLabel} · 已核对 ${processedParagraphs}/${paras.length} 段` }), this.store); }
           catch (e) {
@@ -204,15 +209,17 @@ export class PrepRunner {
             // this batch's new relationship observations. Same-batch endings need
             // explicit disambiguation, not an inferred predecessor.
             const priorRelationshipIds = new Set(this.store.db.all<{id:string}>('SELECT id FROM relationships WHERE series_id=?',[seriesId]).map(r=>r.id));
+            const narrativeBindings: NarrativeBinding[] = [];
             for (const r of out.relationship_events) {
               const a = resolve(r.from_name_jp), b = resolve(r.to_name_jp); if (!a || !b || a === b) continue;
               const recordId = this.store.knowledge.addRelationship({ seriesId, fromCharId: a, toCharId: b, eventType: r.event_type, descriptionJp: r.description_jp, intimacy: r.intimacy_level, respect: r.respect_level, powerDistance: r.power_distance, formality: r.formality_level, validFromPara: r.at_para, evidenceIds: r.evidence_ids });
-              bindNarrativeSources(this.store.db, 'relationship', recordId, batch.map(p => p.id), background.events.map(e => e.id)); stats.relationships++;
+              narrativeBindings.push({ kind: 'relationship', id: recordId, ids: batch.map(p => p.id), dependencyIds: background.events.map(e => e.id) }); stats.relationships++;
             }
             for (const e of out.plot_events) {
               const recordId = this.store.knowledge.addEvent({ seriesId, summaryJp: e.summary_jp, atPara: e.at_para, revealsToReader: e.reveals_to_reader, characterIds: e.character_names.map(resolve).filter((x): x is string => !!x), evidenceIds: e.evidence_ids });
-              bindNarrativeSources(this.store.db, 'event', recordId, batch.map(p => p.id), background.events.map(e => e.id)); stats.events++;
+              narrativeBindings.push({ kind: 'event', id: recordId, ids: batch.map(p => p.id), dependencyIds: background.events.map(e => e.id) }); stats.events++;
             }
+            bindNarrativeBatch(this.store.db, narrativeBindings);
             const retainedChanges: string[] = [];
             for (const k of out.knowledge_change_candidates) {
               let entityId: string | null | undefined = k.entity_type === 'term' ? this.store.glossary.findTermByJp(seriesId, k.entity_name_jp)?.id : resolve(k.entity_name_jp);
@@ -243,6 +250,8 @@ export class PrepRunner {
             supersedeChangeCandidates(this.store.db, seriesId, batch.map(p => p.id), retainedChanges);
             checkpoint.save(batch, { before: batch[0]!.seriesOrdinal, background: background.signature, identity: identityInput });
           }));
+          await new Promise<void>(resolve => setImmediate(resolve));
+          this.check();
           processedParagraphs += batch.length;
           this.emit({ detail: detail(), message: `预读「${chapterLabel}」：已核对 ${processedParagraphs}/${paras.length} 段` });
         }
@@ -305,7 +314,9 @@ export class PrepRunner {
               t.occurrence_paragraph_ids.forEach(id => a.occ.add(id)); t.conflicts.forEach(c => a.conflicts.add(c)); a.confidence = Math.max(a.confidence, t.confidence);
               agg.set(t.term_jp, a);
             }
-            processedParagraphs += batch.length;
+            await new Promise<void>(resolve => setImmediate(resolve));
+          this.check();
+          processedParagraphs += batch.length;
             this.emit({ detail: { phase: 'terms', label: '术语提取', done: processedParagraphs, total: paras.length, unit: '段', chapterTitle: ch.title ?? `第${ch.chapterNumber}章` }, message: `术语：${ch.title ?? ch.chapterNumber}，已核对 ${processedParagraphs}/${paras.length} 段` });
           } catch (e) {
             if (!(e instanceof AiCallFailed) || e.lastError instanceof ProviderError && !['shape','truncated'].includes(e.lastError.kind)) throw e;
