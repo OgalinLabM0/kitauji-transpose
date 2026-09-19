@@ -1,3 +1,4 @@
+import { KnowledgeRepo } from '../db/knowledgeRepo';
 import type { ProjectStore } from '../db';
 import { validNameQuote } from '../validation/nameEvidence';
 import { parseNameMentionReview } from '../validation/nameMentionReview';
@@ -53,10 +54,11 @@ export async function splitPreRead(ai: AiClient, user: string, batch: readonly P
   if(store){
     const ambiguous:{character:PreReadOutput['characters'][number];paragraphId:string;source:string}[]=[];
     for(const c of people.value.characters){
-      if(knownNames.includes(c.name_jp))continue;
+      const needsSemanticReview=KnowledgeRepo.isGenericName(c.name_jp);
+      if(knownNames.includes(c.name_jp)&&!needsSemanticReview)continue;
       const e=c.name_evidence;
-      if(e && validNameQuote(c.name_jp,e.quote,batch.find(p=>p.id===e.paragraph_id)?.sourceText??''))continue;
-      if(!e && batch.some(p=>c.evidence_ids.includes(p.id)&&validNameQuote(c.name_jp,p.sourceText,p.sourceText)))continue;
+      if(!needsSemanticReview && e && validNameQuote(c.name_jp,e.quote,batch.find(p=>p.id===e.paragraph_id)?.sourceText??''))continue;
+      if(!needsSemanticReview && !e && batch.some(p=>c.evidence_ids.includes(p.id)&&validNameQuote(c.name_jp,p.sourceText,p.sourceText)))continue;
       const p=e?batch.find(p=>p.id===e.paragraph_id):batch.find(p=>c.evidence_ids.includes(p.id)&&p.sourceText.includes(c.name_jp));
       if(!p)throw Error(`人物「${c.name_jp}」缺少本次姓名原文，未建立人物。`);
       ambiguous.push({character:c,paragraphId:p.id,source:p.sourceText});

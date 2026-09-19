@@ -190,6 +190,18 @@ export class KnowledgeRepo {
     });
   }
   removeAlias(characterId: string, aliasJp: string): void { this.db.run('DELETE FROM character_aliases WHERE character_id=? AND alias_jp=?', [characterId, aliasJp]); }
+  /** Only independently reviewed, still-current literal name evidence qualifies. */
+  reviewedLiteralNameParagraphs(characterId:string,name:string):string[] {
+    const ids=new Set<string>();
+    for(const row of this.db.all<{source_proof:string}>('SELECT source_proof FROM character_name_observations WHERE character_id=? AND name_jp=?',[characterId,name])) {
+      try {
+        const proof=JSON.parse(row.source_proof),r=proof.nameReview;
+        if(r && r.name===name && hasVerifiedNameMentionDb(this.db,r.paragraphId,name,r.id) && characterSourceCurrent(this.db,row.source_proof))ids.add(r.paragraphId);
+      } catch { /* A malformed or obsolete proof never overrides the guard. */ }
+    }
+    return [...ids];
+  }
+  hasReviewedLiteralName(characterId:string,name:string):boolean { return this.reviewedLiteralNameParagraphs(characterId,name).length>0; }
   /**
    * 启动/预读后修复：主名是代词/职称的档案 → 若有真名别名（优先 merged/former-canonical、再取含片假名的最长者）提升为主名；
    * 没有真名的 → 标记失效。同时清掉所有代词/职称类别名。返回处理条数。
@@ -199,7 +211,7 @@ export class KnowledgeRepo {
     for (const c of this.listCharacters(seriesId)) {
       const rows = this.db.all<{ alias_jp: string; alias_type: string }>('SELECT alias_jp, alias_type FROM character_aliases WHERE character_id=?', [c.id]);
       // 先从旧坏档案的全部非泛称别名中挑真名；不能先按旧主名校验，否则「僕」无法提升到「ターニャ」
-      if (KnowledgeRepo.isGenericName(c.canonical_name_jp)) {
+      if (KnowledgeRepo.isGenericName(c.canonical_name_jp) && !this.hasReviewedLiteralName(c.id,c.canonical_name_jp)) {
         const cands = rows.filter(a => !KnowledgeRepo.isGenericName(a.alias_jp) && (a.alias_type !== 'pre-read' || this.aliasesAt(c.id, Number.MAX_SAFE_INTEGER).includes(a.alias_jp)));
         const pick = cands.filter(a => a.alias_type === 'merged' || a.alias_type === 'former-canonical').sort((x, y) => y.alias_jp.length - x.alias_jp.length)[0]
           ?? cands.filter(a => /[ァ-ヺー]/.test(a.alias_jp)).sort((x, y) => y.alias_jp.length - x.alias_jp.length)[0]

@@ -1,3 +1,4 @@
+import { hasVerifiedNameMention } from './nameMentionReceipts';
 import { quarantineInitialFields } from '../db/initialFieldTrust';
 import { loadTermExtractionCheckpoint, saveTermExtractionCheckpoint } from './termExtractionCheckpoint';
 import { termProposalContext } from './termProposalContext';
@@ -22,7 +23,7 @@ import { reconcileTermCandidates } from './termCandidatePolicy';
 import { isHanOnlyTerm, termSplitReceipt, type TermSplitReceipt } from '../validation/termGranularity';
 import { observeWithConflicts } from './characterConflicts';
 import { PreReadCheckpoint } from './preReadCheckpoint';
-import { visibleNameSource, containsVisibleQuote } from '../validation/nameEvidence';
+import { visibleNameSource, containsVisibleQuote, type NameEvidence } from '../validation/nameEvidence';
 import { guardGender } from '../validation/genderEvidence';
 export { guardGender } from '../validation/genderEvidence';
 
@@ -131,8 +132,9 @@ export class PrepRunner {
             const idOf = new Map<string, string>();
             const batchAt = Math.max(...batch.map(p => p.seriesOrdinal));
             for (const c of out.characters) {
+              const reviewedNameEvidence:NameEvidence|undefined=c.name_evidence;
               // 代词/职称不是人名：「僕」「私」「少尉」「中隊長」一律不建档（AI 常把一人称当人物输出）
-              if (KnowledgeRepo.isGenericName(c.name_jp)) { this.store.translations.log({ level: 'info', workstationId: 'book-pre-reader', paragraphId: c.evidence_ids[0] ?? null, message: `「${c.name_jp}」是代词/职称，不作为人物建档` }); continue; }
+              if (KnowledgeRepo.isGenericName(c.name_jp) && !(reviewedNameEvidence?.reviewId && hasVerifiedNameMention(this.store,reviewedNameEvidence.paragraph_id,c.name_jp,reviewedNameEvidence.reviewId))) { this.store.translations.log({ level: 'info', workstationId: 'book-pre-reader', paragraphId: c.evidence_ids[0] ?? null, message: `「${c.name_jp}」是代词/职称，不作为人物建档` }); continue; }
               // 同一人物归并：AI 若把「デグレチャフ」「ターニャ・デグレチャフ」当成新人物，按名字部件规则归到已有档案；同姓多义则不自动合并
               let mergedInto: string | null = null;
               if (!this.store.knowledge.findByName(seriesId, c.name_jp, batchAt)) {
@@ -315,6 +317,16 @@ export class PrepRunner {
         this.emit({ done: this.progress.done + 1 });
       }
 
+      // A name already independently checked in this volume must not depend on
+      // a second free extraction remembering it. It remains an unchosen term
+      // candidate and still goes through the existing semantic term selection.
+      const volumeIds=new Set(volumeParagraphs.map(p=>p.id));
+      for(const person of this.store.knowledge.charactersAt(seriesId,Number.MAX_SAFE_INTEGER)) {
+        const name=person.canonical_name_jp;
+        if(isHanOnlyTerm(name)||agg.has(name))continue;
+        const evidence=this.store.knowledge.reviewedLiteralNameParagraphs(person.id,name).filter(id=>volumeIds.has(id));
+        if(evidence.length)agg.set(name,{term_type:'person',sense_identity:'',occ:new Set(evidence),confidence:0.8,conflicts:new Set(),split:null});
+      }
       // Preserve evidenced domain candidates; an ungrounded second opinion must not silently delete them.
       this.check();
       this.store.db.transaction(() => {
@@ -325,7 +337,8 @@ export class PrepRunner {
 
           if (a.term_type === 'person' || a.term_type === 'honorific') {
             // 「田中さん」「高坂さん」这类带称谓后缀的形式不是术语：由称谓体系（④）处理；代词/职称也不是
-            if (KnowledgeRepo.isGenericName(jp)) { this.store.translations.log({ level: 'info', workstationId: 'term-extractor', message: `「${jp}」是称谓形/代词，不作为术语（人名由人物档案+称谓体系处理）` }); continue; }
+            const namedPerson = a.term_type === 'person' ? this.store.knowledge.findByName(seriesId,jp) : null;
+            if (KnowledgeRepo.isGenericName(jp) && !(namedPerson && namedPerson.canonical_name_jp===jp && this.store.knowledge.hasReviewedLiteralName(namedPerson.id,jp))) { this.store.translations.log({ level: 'info', workstationId: 'term-extractor', message: `「${jp}」是称谓形/代词，不作为术语（人名由人物档案+称谓体系处理）` }); continue; }
           }
           // 程序补全出现位置（模型只给样本）
           const occ = new Set(a.occ); for (const p of volumeParagraphs.filter(p => containsVisibleQuote(p.sourceText, jp))) occ.add(p.id);
