@@ -5,7 +5,7 @@ import type { ProjectStore } from '../db';
 import type { AiClient } from '../ai/client';
 import { parseWith, checkIdSet, type ProtocolResult } from '../ai/protocol';
 import { containsVisibleQuote, visibleNameSource } from '../validation/nameEvidence';
-import { isHanOnlyTerm, unwrappedTerm, TERM_GRANULARITY_VERSION } from '../validation/termGranularity';
+import { companyTermParts, isHanOnlyTerm, unwrappedTerm, TERM_GRANULARITY_VERSION } from '../validation/termGranularity';
 import { reconcileTermCandidates, retireTermCandidate } from './termCandidatePolicy';
 
 export const TERM_SELECTION_VERSION = 'context-selection-v1';
@@ -53,6 +53,26 @@ export async function selectTermCandidates(store:ProjectStore,ai:AiClient,volume
   // User's name-component rule takes precedence over a model calling a surname or
   // company-name component an ordinary word. This never supplies a Chinese name.
   const requiredParts=new Set<string>();
+  // Extraction may already return name components, so there is no retired
+  // parent term and no term-granularity receipt. Current person observations
+  // and the literal full name provide the same component rule in that case.
+  for (const person of store.knowledge.charactersAt(series, Number.MAX_SAFE_INTEGER)) {
+    const name = person.canonical_name_jp;
+    const parts = companyTermParts(name, 'person');
+    if (!parts || parts.length < 2) continue;
+    const evidence = paras.filter(p => containsVisibleQuote(p.sourceText, name));
+    if (!evidence.length) continue;
+    for (const part of parts) {
+      if (isHanOnlyTerm(part.term_jp)) continue;
+      requiredParts.add(part.term_jp);
+      if (!store.db.get('SELECT id FROM terms WHERE series_id=? AND term_jp=?', [series, part.term_jp])) {
+        store.glossary.upsertTerm({ seriesId: series, introducedVolume: person.introduced_volume,
+          termJp: part.term_jp, termZh: null, termType: 'person', lockLevel: 'suggested',
+          evidenceIds: evidence.map(p => p.id).slice(0, 20), notes: `来自当前人物「${name}」；译名仍需确认` });
+      }
+    }
+  }
+
   for(const row of store.db.all<{value:string}>('SELECT value FROM meta WHERE key LIKE ?',['term-granularity:%'])){
     let receipt: {prior?:{series_id?:string;term_type?:string;term_jp?:string};parts?:string[]};
     try{receipt=JSON.parse(row.value);}catch{continue;}
@@ -64,6 +84,7 @@ export async function selectTermCandidates(store:ProjectStore,ai:AiClient,volume
       for(const t of store.db.all<{id:string;term_zh:string|null;lock_level:string;valid_to_para:number|null}>('SELECT id,term_zh,lock_level,valid_to_para FROM terms WHERE series_id=? AND term_jp=?',[series,word])){
         const audit=store.db.get<{value:string}>('SELECT value FROM meta WHERE key=?',[`term-selection-audit:${t.id}`]);
         if(t.valid_to_para!==0||t.term_zh||t.lock_level!=='suggested'||!audit)continue;
+        if(store.glossary.findTermByJp(series,word))continue; // Re-extraction may already have created the current candidate.
         if(JSON.parse(audit.value).decision.action!=='exclude')continue;
         store.db.run('INSERT OR IGNORE INTO meta(key,value) VALUES(?,?)',[`term-selection-rule-restore:${t.id}`,audit.value]);
         store.db.run('UPDATE terms SET valid_to_para=NULL WHERE id=?',[t.id]);

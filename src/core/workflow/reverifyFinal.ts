@@ -8,7 +8,7 @@ import { type AiClient, type TranslationItem } from '@core/ai';
 import { verifyCandidate } from './verifyCandidate';
 import { auditInput, bindAuditReceipt } from './auditReceipts';
 import { rebuildCandidateRuby } from './rubyPlan';
-import { reviewRepairResolution } from './repairResolution';
+import { RepairResolutionUnresolved, reviewRepairResolution } from './repairResolution';
 
 export { parseAlignment } from './sourceAlignment';
 
@@ -58,6 +58,24 @@ export async function reverifyFinal(store: ProjectStore, ai: AiClient, paragraph
     } catch (error) {
       signal?.throwIfAborted();
       store.translations.log({ level: 'warning', workstationId: 'repair-resolution-reviewer', paragraphId, message: '具体读感问题复核未通过：' + (error as Error).message });
+      // A previous edit may have removed the old issue quote without fixing its
+      // meaning. Hand the validated CURRENT quote back to bounded repair rather
+      // than repeatedly rechecking an obsolete quote and stopping without a target.
+      if (error instanceof RepairResolutionUnresolved) {
+        if (store.translations.latestFinal(paragraphId)?.id !== previous.id || auditInput(store, paragraphId).inputHash !== inputHash)
+          return { ok: false, message: '稿件或依据已变化，原问题保留，请重新复核' };
+        const unresolved = error.receipt.items.filter(i => i.decision === 'unresolved' && i.target_quote.trim());
+        const covered = new Set(error.receipt.items.map(i => i.id));
+        if (unresolved.length && concreteReading.every(i => covered.has(i.id)) && !error.receipt.items.some(i => i.decision === 'uncertain')) {
+          const diagnosticIds = store.transaction(() => unresolved.map(i => store.translations.addFinding({
+            paragraphId, workstationId: 'repair-resolution-reviewer', findingType: 'NATURALNESS_UNRESOLVED',
+            severity: 'blocks_export', description: i.reason, evidenceJp: i.source_quote, evidenceZh: i.target_quote,
+          })));
+          store.translations.log({ level: 'info', workstationId: 'repair-resolution-reviewer', paragraphId,
+            message: JSON.stringify({ contract: 'current-reading-repair-target-v1', previousFinalId: previous.id, inputHash, diagnosticIds, receipt: error.receipt }) });
+          return { ok: false, message: '当前稿的具体表达问题已定位，可继续有界修复；原稿和原问题保留', diagnosticIds };
+        }
+      }
       return { ok: false, message: '此前指出的表达问题尚未确认解决，正文及原问题已保留' };
     }
   }

@@ -7,7 +7,7 @@ import { TERM_EXTRACT_PROMPT } from './prompts/termPrompts';
  * Terms certify extraction only: existing translation proposals are not rerun by extraction. */
 const contracts = {
   preread: ['split-preread-literal-name-review-v11', CHARACTER_PRE_READ_PROMPT, EVENT_PRE_READ_PROMPT],
-  terms: ['term-extraction-reviewed-names-v3', TERM_EXTRACT_PROMPT, TERM_SELECTION_INSTRUCTION],
+  terms: ['term-extraction-name-components-v4', TERM_EXTRACT_PROMPT, TERM_SELECTION_INSTRUCTION],
 } as const;
 export const preparationContract = (kind: keyof typeof contracts): string =>
   createHash('sha256').update(JSON.stringify(contracts[kind])).digest('hex');

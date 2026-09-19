@@ -31,12 +31,19 @@ export function parseRepairResolution(text: string, source: string, after: strin
   } catch (error) { return { ok: false, error: { code: 'INVALID_SHAPE', message: (error as Error).message } }; }
 }
 
+export class RepairResolutionUnresolved extends Error {
+  constructor(readonly receipt: { aiCallId: string; items: z.infer<typeof schema>['items'] }) {
+    super('指定问题尚未解决或依据不足，保留原稿');
+    this.name = 'RepairResolutionUnresolved';
+  }
+}
+
 export async function reviewRepairResolution(ai: AiClient, paragraphId: string, source: string, before: string, after: string, issues: readonly RepairIssue[], signal?: AbortSignal, sourceContext: readonly { id: string; source: string }[] = []) {
   const receipts: { aiCallId: string; items: z.infer<typeof schema>['items'] }[] = [];
   for (let offset = 0; offset < issues.length; offset += 3) {
     const batch = issues.slice(offset, offset + 3);
     const result = await ai.structured({ workstation: 'repair-resolution-reviewer', paragraphId, user: JSON.stringify({ source, before, after, issues: batch, source_context_read_only: sourceContext }), parseRetries: 1, maxOutputTokens: 1800, ...(signal ? { signal } : {}) }, text => parseRepairResolution(text, source, after, batch));
-    if (result.value.items.some(i => i.decision === 'unresolved' || i.decision === 'uncertain')) throw new Error('指定问题尚未解决或依据不足，保留原稿');
+    if (result.value.items.some(i => i.decision === 'unresolved' || i.decision === 'uncertain')) throw new RepairResolutionUnresolved({ aiCallId: result.aiCallId, items: result.value.items });
     receipts.push({ aiCallId: result.aiCallId, items: result.value.items });
   }
   return receipts;
