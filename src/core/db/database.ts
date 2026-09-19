@@ -20,8 +20,14 @@ export class Db {
   private depth = 0;
 
   readonly migrationBackupPath: string | null;
-  constructor(readonly path: string) {
-    this.raw = new DatabaseSync(path);
+  constructor(readonly path: string, options: { readOnly?: boolean } = {}) {
+    this.raw = new DatabaseSync(path, { readOnly: options.readOnly ?? false });
+    if (options.readOnly) {
+      this.migrationBackupPath = null;
+      try { if (inspectDatabaseVersion(this.raw) !== SCHEMA_VERSION) throw new Error('只读查询要求已升级的当前书库'); }
+      catch (error) { this.raw.close(); throw error; }
+      return;
+    }
     let backupPath: string | null = null;
     try {
       const from = inspectDatabaseVersion(this.raw);

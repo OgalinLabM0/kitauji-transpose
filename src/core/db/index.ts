@@ -22,9 +22,9 @@ export class ProjectStore {
   readonly knowledge: KnowledgeRepo;
   readonly translations: TranslationRepo;
   readonly archives: ArchiveRepo;
-  constructor(path: string) {
-    this.db = new Db(path);
-    try { initializeLibraryIdentity(this.db); }
+  constructor(path: string, options: { readOnly?: boolean } = {}) {
+    this.db = new Db(path, options);
+    try { if (!options.readOnly) initializeLibraryIdentity(this.db); }
     catch (error) { this.db.close(); throw error; }
     this.projects = new ProjectRepo(this.db);
     this.glossary = new GlossaryRepo(this.db);

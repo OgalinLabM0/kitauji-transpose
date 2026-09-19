@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { APP_VERSION } from '@shared/appVersion';
 import { useEffect } from 'react';
 import { DraftIdentityBoundary } from './components/DraftIdentityBoundary';
@@ -27,7 +28,7 @@ const NAV: { id: Page; label: string; needSeries?: boolean; icon: typeof Library
 
 export function App() { return <DraftIdentityBoundary><AppContent /></DraftIdentityBoundary>; }
 function AppContent() {
-  const { page, setPage, series, currentSeriesId, currentVolumeId, selectSeries, selectVolume, queueCount, progress, provider, toast } = useApp();
+  const { page, setPage, series, currentSeriesId, currentVolumeId, selectSeries, selectVolume, queueCount, progress, provider, toast } = useApp(useShallow(s => ({ page: s.page, setPage: s.setPage, series: s.series, currentSeriesId: s.currentSeriesId, currentVolumeId: s.currentVolumeId, selectSeries: s.selectSeries, selectVolume: s.selectVolume, queueCount: s.queueCount, progress: s.progress, provider: s.provider, toast: s.toast })));
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.ctrlKey && e.key === ',') { e.preventDefault(); setPage('settings'); }

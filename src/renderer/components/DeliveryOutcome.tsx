@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { SeriesDeliveryState } from '@shared/ipc';
 import { api } from '../api';
@@ -10,7 +11,7 @@ import { Modal } from './ui';
 
 /** One persistent task area, shared by the manuscript, decisions and logs. */
 export function DeliveryOutcome() {
-  const { series, rev, progress, currentSeriesId } = useApp();
+  const { series, rev, progress, currentSeriesId } = useApp(useShallow(s => ({ series: s.series, rev: s.rev, progress: s.progress, currentSeriesId: s.currentSeriesId })));
   const identity = useSyncExternalStore(draftIdentity.subscribe, draftIdentity.snapshot);
   const scope = JSON.stringify(series.map(s => s.id));
   const key = JSON.stringify([identity.token, scope, rev.series, rev.queue, progress.running]);

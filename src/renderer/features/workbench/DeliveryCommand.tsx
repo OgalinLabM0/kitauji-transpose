@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { SeriesDeliveryState } from '@shared/ipc';
 import { api } from '../../api';
@@ -7,7 +8,7 @@ import { TaskProgressView, taskPhaseLabel } from '../../components/TaskProgressV
 
 /** One entry for the existing delivery service, without owning background work. */
 export function DeliveryCommand({ seriesId, onSetup, onDetails }: { seriesId: string; onSetup: () => void; onDetails: (volumeId?: string) => void }) {
-  const { rev, progress, series, toast, provider } = useApp();
+  const { rev, progress, series, toast, provider } = useApp(useShallow(s => ({ rev: s.rev, progress: s.progress, series: s.series, toast: s.toast, provider: s.provider })));
   const identity = useSyncExternalStore(draftIdentity.subscribe, draftIdentity.snapshot);
   const scope = `${identity.token}:${seriesId}`;
   const current = useRef(scope); current.current = scope;

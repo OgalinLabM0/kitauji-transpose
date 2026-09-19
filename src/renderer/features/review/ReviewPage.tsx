@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { nextReviewItem } from './navigation';
 import { draftIdentity } from '../../store/draftIdentityBridge';
@@ -42,7 +43,7 @@ function resolvedDetail(item: ReviewItemView): ReactNode {
     {character?.review?.decision === 'unsupported' && <div className="small">已保留人物档案</div>}</>;
 }
 export function ReviewPage() {
-  const { currentSeriesId, currentVolumeId, rev, progress, toast } = useApp();
+  const { currentSeriesId, currentVolumeId, rev, progress, toast } = useApp(useShallow(s => ({ currentSeriesId: s.currentSeriesId, currentVolumeId: s.currentVolumeId, rev: s.rev, progress: s.progress, toast: s.toast })));
   const identity = useSyncExternalStore(draftIdentity.subscribe, draftIdentity.snapshot);
   const target = useReviewDraftNavigation(s => s.target);
   const [scope, setScope] = useState<'volume' | 'series'>('volume');

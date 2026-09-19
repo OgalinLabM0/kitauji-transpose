@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { currentDraftSession } from '../../store/useDraft';
 import { useFormDraft } from '../../store/useFormDraft';
@@ -15,7 +16,7 @@ const FP = ['boku', 'ore', 'watashi', 'atashi', 'uchi', 'washi', 'sessha', 'wata
 const REG = ['formal', 'casual', 'rough', 'noble', 'archaic', 'childlike'];
 
 export function KnowledgePage() {
-  const { currentSeriesId, rev } = useApp();
+  const { currentSeriesId, rev } = useApp(useShallow(s => ({ currentSeriesId: s.currentSeriesId, rev: s.rev })));
   const [tab, setTab] = useState<'chars' | 'addresses' | 'relations' | 'events'>('chars');
   const [events, setEvents] = useState<NarrativeEventView[]>([]);
   const [chars, setChars] = useState<CharacterView[]>([]);

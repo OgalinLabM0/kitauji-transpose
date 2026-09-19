@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useVolumeOverview } from '../../store/useVolumeOverview';
 import { deliveryStatus } from './deliveryStatus';
 import { PersistentImportDialog } from './PersistentImportDialog';
@@ -69,7 +70,7 @@ function DeleteSeriesDialog({ series, scopeToken, refreshSeries, onClose }: { se
 }
 
 export function ShelfPage() {
-  const { series, currentSeriesId, selectSeries, selectVolume, setPage, refreshSeries, rev, progress } = useApp();
+  const { series, currentSeriesId, selectSeries, selectVolume, setPage, refreshSeries, rev, progress } = useApp(useShallow(s => ({ series: s.series, currentSeriesId: s.currentSeriesId, selectSeries: s.selectSeries, selectVolume: s.selectVolume, setPage: s.setPage, refreshSeries: s.refreshSeries, rev: s.rev, progress: s.progress })));
   // 各系列知识库概况（多系列时一眼看出每个系列的进展）
   const [stats, setStats] = useState<Record<string, { chars: number; terms: number; queue: number }>>({});
   useEffect(() => { void (async () => { const out: Record<string, { chars: number; terms: number; queue: number }> = {}; for (const s of series) { try { const [c, t, q] = await Promise.all([api.knowledge.characters(s.id), api.glossary.list(s.id), api.review.counts(s.id)]); out[s.id] = { chars: c.length, terms: t.length, queue: Object.values(q).reduce((a, b) => a + b, 0) }; } catch { /* 系列可能刚被删 */ } } setStats(out); })(); }, [series, rev.knowledge, rev.glossary, rev.queue]);

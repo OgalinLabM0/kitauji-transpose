@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useDraft } from '../../store/useDraft';
 import { draftIdentity } from '../../store/draftIdentityBridge';
 import { TaskOverview } from './TaskOverview';
@@ -28,7 +29,7 @@ const STATUS_LABEL: Record<StatusFilter, string> = {
 };
 
 export function WorkbenchPage() {
-  const { currentSeriesId, currentVolumeId, currentChapterId, selectChapter, paragraphTarget, rev, progress, series, toast } = useApp();
+  const { currentSeriesId, currentVolumeId, currentChapterId, selectChapter, paragraphTarget, rev, progress, series, toast } = useApp(useShallow(s => ({ currentSeriesId: s.currentSeriesId, currentVolumeId: s.currentVolumeId, currentChapterId: s.currentChapterId, selectChapter: s.selectChapter, paragraphTarget: s.paragraphTarget, rev: s.rev, progress: s.progress, series: s.series, toast: s.toast })));
   const [chapters, setChapters] = useState<ChapterSummary[]>([]);
   const [paras, setParas] = useState<ParagraphView[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
@@ -68,9 +69,14 @@ export function WorkbenchPage() {
     let active = true;
     if (!currentVolumeId) return;
     void api.project.listChapters(currentVolumeId).then(ch => { if (!active) return; setChapters(ch); if (!currentChapterId || !ch.some(c => c.id === currentChapterId)) selectChapter(ch[0]?.id ?? null); }).catch(e => { if (active) toast('error', (e as Error).message); });
-    void api.project.prepStatus(currentVolumeId).then(p => { if (active) setPrep(p); }).catch(() => {});
+
     return () => { active = false; };
   }, [currentVolumeId, currentChapterId, rev.paragraphs, rev.series, rev.knowledge, rev.glossary, rev.queue]);
+  useEffect(() => {
+    let active = true;
+    if (currentVolumeId && !progress.running) void api.project.prepStatus(currentVolumeId).then(p => { if (active) setPrep(p); }).catch(() => {});
+    return () => { active = false; };
+  }, [currentVolumeId, progress.running, rev.knowledge, rev.glossary, rev.queue, rev.paragraphs]);
   useEffect(() => { setParas([]); setCurrent(null); setEditing(null); }, [currentVolumeId, currentChapterId, page]);
   // 切册／切章时拒绝较早请求的迟到响应。
   useEffect(() => {
@@ -259,7 +265,7 @@ function Unit({ referenceText, p, isCurrent, isEditing, onSelect, onEdit, onEdit
 }
 
 function SidePanel({ current, chapterIds }: { current: ParagraphView | null; chapterIds: string[] }) {
-  const { currentSeriesId, rev } = useApp();
+  const { currentSeriesId, rev } = useApp(useShallow(s => ({ currentSeriesId: s.currentSeriesId, rev: s.rev })));
   const [tab, setTab] = useState<'scene' | 'audit' | 'chars' | 'terms' | 'queue'>('scene');
   const [analysis, setAnalysis] = useState<ParagraphAnalysisView | null>(null);
   const [findings, setFindings] = useState<Awaited<ReturnType<typeof api.translation.findings>>>([]);
@@ -333,7 +339,7 @@ function stepState(step: typeof PREP_STEPS[number], prep: PrepStatus, runningPha
 }
 
 function PrepDialog({ volumeId, seriesId, prep, onClose }: { volumeId: string; seriesId: string; prep: PrepStatus; onClose: () => void }) {
-  const { progress, setPage, lastPhaseResult } = useApp();
+  const { progress, setPage, lastPhaseResult } = useApp(useShallow(s => ({ progress: s.progress, setPage: s.setPage, lastPhaseResult: s.lastPhaseResult })));
   const [localizationStatus, setLocalizationStatus] = useState<{ needsLocalization: boolean; canLocalize: boolean; unlocalizedEvents: number; unlocalizedRelationships: number; confirmedTerms: number } | null>(null);
   const lastOf = (phases: string[]): string | null => { for (const ph of phases) if (lastPhaseResult[ph]) return lastPhaseResult[ph]!; return null; };
   // 当前正在跑的 phase（非 running 则为 null）
@@ -520,7 +526,7 @@ function PrepDialog({ volumeId, seriesId, prep, onClose }: { volumeId: string; s
 }
 
 function ExportDialog({ volumeId, title, onClose }: { volumeId: string; title: string; onClose: () => void }) {
-  const { projectSettings, currentSeriesId, toast, rev } = useApp();
+  const { projectSettings, currentSeriesId, toast, rev } = useApp(useShallow(s => ({ projectSettings: s.projectSettings, currentSeriesId: s.currentSeriesId, toast: s.toast, rev: s.rev })));
   const [gate, setGate] = useState<QualityGateReport | null>(null);
   const [mode, setMode] = useState<'zh' | 'bilingual'>('zh');
   const [result, setResult] = useState<ExportResult | null>(null);

@@ -183,7 +183,7 @@ export function createPreviewApi(notify: (message: string) => void = () => {}): 
       seriesQualityGate: async id => ({ ok: false, volumes: requireSeries(id).volumes.map(v => ({ volumeId: v.id, volumeNumber: v.volumeNumber, title: v.title, report: report(v.id) })) }),
       runSeries: deny('导出系列文件'), qualityGate: async id => report(id), run: deny('导出册文件'),
     },
-    logs: { recent: async (afterId, limit = 300) => copy(logs.filter(l => l.id > afterId).slice(0, Math.max(0, Math.min(1000, limit)))), clear: deny('清除任务日志') },
+    logs: { page: async () => ({ entries: copy(logs), hasMore: false }), detail: async (id, offset=0) => { const text=logs.find(l=>l.id===id)?.message; return text == null ? null : { text: text.slice(offset,offset+12000), hasMore: text.length>offset+12000 }; }, recent: async (afterId, limit = 300) => copy(logs.filter(l => l.id > afterId).slice(0, Math.max(0, Math.min(1000, limit)))), clear: deny('清除任务日志') },
     // Static read-only fixtures never emit progress/log/data changes. No native IPC is attached.
     on: (_event, _callback) => () => {},
   };

@@ -197,9 +197,22 @@ export class TranslationRepo {
     this.db.run('INSERT INTO activity_log(ts,level,workstation_id,paragraph_id,message,duration_ms,tokens) VALUES(?,?,?,?,?,?,?)',
       [nowIso(), e.level, e.workstationId ?? null, e.paragraphId ?? null, e.message, e.durationMs ?? null, e.tokens ?? null]);
   }
-  recentLogs(afterId: number, limit = 200): ActivityLogEntry[] {
-    return this.db.all<{ id: number; ts: string; level: ActivityLogEntry['level']; workstation_id: WorkstationId | null; paragraph_id: string | null; message: string; duration_ms: number | null; tokens: number | null }>('SELECT * FROM activity_log WHERE id>? ORDER BY id LIMIT ?', [afterId, limit])
+  recentLogs(afterId: number, limit = 200, preview = false): ActivityLogEntry[] {
+    return this.db.all<{ id: number; ts: string; level: ActivityLogEntry['level']; workstation_id: WorkstationId | null; paragraph_id: string | null; message: string; duration_ms: number | null; tokens: number | null }>(`SELECT ${preview ? 'id,ts,level,workstation_id,paragraph_id,substr(message,1,500) message,duration_ms,tokens' : '*'} FROM activity_log WHERE id>? ORDER BY id LIMIT ?`, [afterId, Math.max(1, Math.min(1000, limit))])
       .map(r => ({ id: r.id, ts: r.ts, level: r.level, workstationId: r.workstation_id, paragraphId: r.paragraph_id, message: r.message, durationMs: r.duration_ms, tokens: r.tokens }));
+  }
+  latestLogId(): number { return this.db.get<{ id: number }>('SELECT COALESCE(MAX(id),0) id FROM activity_log')!.id; }
+  logPage(options: { beforeId?: number | undefined; level?: string | undefined; workstation?: string | undefined; search?: string | undefined } = {}): { entries: ActivityLogEntry[]; hasMore: boolean } {
+    const rows = this.db.all<{ id: number; ts: string; level: ActivityLogEntry['level']; workstation_id: WorkstationId | null; paragraph_id: string | null; message: string; duration_ms: number | null; tokens: number | null }>(
+      `SELECT id,ts,level,workstation_id,paragraph_id,substr(message,1,500) message,duration_ms,tokens FROM activity_log
+       WHERE id<? AND (?='all' OR level=? OR (?='warning' AND level='error'))
+       AND (?='all' OR workstation_id=?) AND (?='' OR instr(lower(message),lower(?))>0) ORDER BY id DESC LIMIT 101`,
+      [options.beforeId ?? Number.MAX_SAFE_INTEGER, options.level ?? 'all', options.level ?? 'all', options.level ?? 'all', options.workstation ?? 'all', options.workstation ?? 'all', options.search ?? '', options.search ?? '']);
+    return { hasMore: rows.length > 100, entries: rows.slice(0,100).reverse().map(r => ({ id:r.id,ts:r.ts,level:r.level,workstationId:r.workstation_id,paragraphId:r.paragraph_id,message:r.message,durationMs:r.duration_ms,tokens:r.tokens })) };
+  }
+  logDetail(id: number, offset = 0): { text: string; hasMore: boolean } | null {
+    const row = this.db.get<{ text: string; total: number }>('SELECT substr(message,?,12000) text,length(message) total FROM activity_log WHERE id=?', [offset+1,id]);
+    return row ? { text: row.text, hasMore: offset+12000<row.total } : null;
   }
   /** 清空任务日志（activity_log 整表）。 */
   clearLogs(): number {

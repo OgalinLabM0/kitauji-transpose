@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { kanaReading } from '@shared/kanaReading';
 import { useEffect, useMemo, useState } from 'react';
 import { useFormDraft } from '../../store/useFormDraft';
@@ -13,7 +14,7 @@ const TYPES: [string, string][] = [['person', '人物'], ['place', '地点'], ['
 const LOCK_LABEL: Record<LockLevel, string> = { suggested: '提案', confirmed: '默认义', 'hard-locked': '硬锁定' };
 
 export function GlossaryPage() {
-  const { currentSeriesId, rev, toast } = useApp();
+  const { currentSeriesId, rev, toast } = useApp(useShallow(s => ({ currentSeriesId: s.currentSeriesId, rev: s.rev, toast: s.toast })));
   const [terms, setTerms] = useState<TermView[]>([]);
   const [type, setType] = useState<string | null>(null);
   const [q, setQ] = useState('');
@@ -71,7 +72,7 @@ export function GlossaryPage() {
 }
 
 function TermDetail({ term, seriesId, onDeleted }: { term: TermView; seriesId: string; onDeleted: () => void }) {
-  const { rev, toast } = useApp();
+  const { rev, toast } = useApp(useShallow(s => ({ rev: s.rev, toast: s.toast })));
   const [occ, setOcc] = useState<TermOccurrenceView[]>([]);
   const senseDraft = useFormDraft(`sense-${term.id}`, { zh: '', gloss: '', hint: '' }, { page: 'glossary', seriesId, objectId: term.id, title: `${term.termJp} · 新义项` }, { id: term.id, name: term.termJp, senses: term.senses });
   const newSense = senseDraft.value, setNewSense = senseDraft.change;

@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../store/app';
 import { useFormDraft } from '../../store/useFormDraft';
@@ -20,7 +21,7 @@ export function AddressTrajectoryPage() {
   return <AddressTrajectoryContent key={seriesId ?? 'none'} />;
 }
 function AddressTrajectoryContent() {
-  const { currentSeriesId, rev } = useApp();
+  const { currentSeriesId, rev } = useApp(useShallow(s => ({ currentSeriesId: s.currentSeriesId, rev: s.rev })));
   const [addresses, setAddresses] = useState<AddressTrajectoryView[]>([]);
   const [filter, setFilter] = useState('');
   const [selectedPair, setSelectedPair] = useState<string | null>(null);

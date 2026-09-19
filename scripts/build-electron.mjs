@@ -18,3 +18,5 @@ const common = {
 await build({ ...common, entryPoints: ['electron/main.ts'], format: 'esm', outfile: 'dist-electron/main.mjs' });
 // 沙箱化预加载脚本必须是 CJS
 await build({ ...common, entryPoints: ['electron/preload.ts'], format: 'cjs', outfile: 'dist-electron/preload.cjs' });
+
+await build({ ...common, entryPoints: ['electron/readViewsWorker.ts'], format: 'esm', outfile: 'dist-electron/readViewsWorker.mjs' });

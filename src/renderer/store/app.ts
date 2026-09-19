@@ -120,7 +120,7 @@ export const useApp = create<AppState>((set, get) => ({
   refreshLogs: async () => {
     const token = draftIdentity.snapshot().token;
     if (!acceptsLibraryRead(token)) return;
-    const logs = await api.logs.recent(0, 300);
+    const { entries: logs } = await api.logs.page();
     if (acceptsLibraryRead(token)) set({ logs });
   },
   refreshProgress: async () => {
@@ -149,9 +149,21 @@ export const useApp = create<AppState>((set, get) => ({
       progressRevision++;
       set(s => ({ progress: p, lastPhaseResult: !p.running && s.progress.running ? { ...s.lastPhaseResult, [s.progress.phase]: p.message } : s.lastPhaseResult }));
     });
+    let pendingLogs: ActivityLogEntry[] = [];
+    let pendingToken = '';
+    let logTimer: ReturnType<typeof setTimeout> | undefined;
     api.on('log', (e) => {
-      if (draftIdentity.snapshot().status !== 'ready') return;
-      set(s => ({ logs: [...s.logs.slice(-999), e] }));
+      const identity = draftIdentity.snapshot();
+      if (identity.status !== 'ready') return;
+      if (pendingToken !== identity.token) { pendingLogs = []; pendingToken = identity.token; }
+      pendingLogs.push(e);
+      if (logTimer) return;
+      logTimer = setTimeout(() => {
+        logTimer = undefined;
+        const entries = pendingLogs; pendingLogs = [];
+        if (!draftIdentity.isCurrent(pendingToken)) return;
+        set(s => ({ logs: [...s.logs, ...entries].slice(-1000) }));
+      }, 80);
     });
     api.on('data-changed', (scope) => {
       if (draftIdentity.snapshot().status !== 'ready') return;

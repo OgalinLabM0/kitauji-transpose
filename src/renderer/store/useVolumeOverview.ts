@@ -1,10 +1,11 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useState } from 'react';
 import type { VolumeOverview } from '@shared/ipc';
 import { api } from '../api';
 import { useApp } from './app';
 
 export function useVolumeOverview(volumeId: string) {
-  const { rev, progress } = useApp();
+  const { rev, progress } = useApp(useShallow(s => ({ rev: s.rev, progress: s.progress })));
   const key = JSON.stringify([volumeId, rev, progress.running]);
   const [result, setResult] = useState<{ key: string; value: VolumeOverview | null; error: string } | null>(null);
   useEffect(() => {

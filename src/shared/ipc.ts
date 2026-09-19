@@ -229,7 +229,10 @@ export interface Api {
     run(volumeId: string, mode: 'zh' | 'bilingual', outputPath: string, preview: boolean): Promise<ExportResult>;
   };
   // ---- 日志 ----
-  logs: { recent(afterId: number, limit?: number): Promise<ActivityLogEntry[]>; clear(): Promise<number> };
+  logs: { recent(afterId: number, limit?: number): Promise<ActivityLogEntry[]>;
+    page(options?: { beforeId?: number | undefined; level?: 'all' | 'warning' | 'error'; workstation?: string | undefined; search?: string | undefined }): Promise<{ entries: ActivityLogEntry[]; hasMore: boolean }>;
+    detail(id: number, offset?: number): Promise<{ text: string; hasMore: boolean } | null>;
+    clear(): Promise<number> };
   // ---- 事件 ----
   on(event: 'library-identity', cb: (state: LibraryIdentityEvent) => void): () => void;
   on(event: 'progress', cb: (p: WorkflowProgress) => void): () => void;

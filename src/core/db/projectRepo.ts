@@ -45,7 +45,7 @@ export class ProjectRepo {
     for (const c of ids) {
       const row = this.db.get<{ value: string }>('SELECT value FROM meta WHERE key=?', [`prep:${kind}:${c}`]);
       const proof = fromJson<{ version?: number; source?: string; contract?: string }>(row?.value, {});
-      if ((kind !== 'preread' || preReadInputsCurrent(this.db, c)) && proof.version === 1 && preparationContractAccepted(kind, proof.contract) && proof.source === this.chapterSourceSignature(c)) done.add(c);
+      if (proof.version === 1 && preparationContractAccepted(kind, proof.contract) && proof.source === this.chapterSourceSignature(c) && (kind !== 'preread' || preReadInputsCurrent(this.db, c))) done.add(c);
     }
     return done;
   }

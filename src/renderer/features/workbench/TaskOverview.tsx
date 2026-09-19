@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useVolumeOverview } from '../../store/useVolumeOverview';
 import { useApp, tryApi } from '../../store/app';
 import { useState, useEffect } from 'react';
@@ -11,7 +12,7 @@ export function TaskOverview({ volumeId, onNavigate }: { volumeId: string; onNav
   const [retryMessage, setRetryMessage] = useState('');
   const [restoring, setRestoring] = useState(false);
   useEffect(() => { setRetryMessage(''); }, [volumeId]);
-  const { setPage, jumpToParagraph } = useApp();
+  const { setPage, jumpToParagraph } = useApp(useShallow(s => ({ setPage: s.setPage, jumpToParagraph: s.jumpToParagraph })));
   const { value, error, running } = useVolumeOverview(volumeId);
   const [liveRun, setLiveRun] = useState<{ volumeId: string; run: VolumeRunState | null } | null>(null);
   useEffect(() => {

@@ -28,7 +28,7 @@ const NAMESPACES = {
   glossary: ['list', 'upsert', 'setLock', 'remove', 'addSense', 'setDefaultSense', 'removeSense', 'occurrences', 'importCsv', 'exportCsv'],
   knowledge: ['history', 'characters', 'automaticFieldDecisions', 'undoAutomaticFieldDecision', 'fieldDecisions', 'undoFieldDecision', 'upsertCharacter', 'setQuirks', 'aliases', 'addAlias', 'mergeCharacters', 'setCanonicalName', 'removeAlias', 'repairNames', 'relationships', 'addresses', 'events', 'addAddress', 'setAddressVariation', 'endAddress'],
   export: ['seriesQualityGate', 'runSeries', 'qualityGate', 'run'],
-  logs: ['recent', 'clear'],
+  logs: ['recent', 'page', 'detail', 'clear'],
 } as const satisfies { [K in keyof NamespacesOnly]: KeysOf<K> };
 
 // 编译期断言：每个命名空间必须完整覆盖契约。缺失即类型错误。

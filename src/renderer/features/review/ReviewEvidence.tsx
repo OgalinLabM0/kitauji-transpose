@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useState } from 'react';
 import type { ParagraphView } from '@shared/types';
 import type { Api } from '@shared/ipc';
@@ -6,7 +7,7 @@ import { useApp, tryApi } from '../../store/app';
 import { MarkedText } from '../../components/ui';
 type Context = Awaited<ReturnType<Api['translation']['context']>>;
 export function ReviewEvidence({ paragraphId }: { paragraphId: string | null }) {
-  const { jumpToParagraph, rev, currentVolumeId } = useApp();
+  const { jumpToParagraph, rev, currentVolumeId } = useApp(useShallow(s => ({ jumpToParagraph: s.jumpToParagraph, rev: s.rev, currentVolumeId: s.currentVolumeId })));
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<{ paragraph: ParagraphView; context: Context } | null>(null);
   const [error, setError] = useState('');

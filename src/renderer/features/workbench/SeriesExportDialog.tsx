@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../../components/ui';
 import { api } from '../../api';
@@ -5,7 +6,7 @@ import { useApp, tryApi } from '../../store/app';
 import type { SeriesDeliveryState, SeriesExportCheck, SeriesExportResult } from '@shared/ipc';
 
 export function SeriesExportDialog({ seriesId, onClose, autoProcess = false }: { seriesId: string; onClose: () => void; autoProcess?: boolean }) {
-  const { series, rev, toast, progress } = useApp();
+  const { series, rev, toast, progress } = useApp(useShallow(s => ({ series: s.series, rev: s.rev, toast: s.toast, progress: s.progress })));
   const [check, setCheck] = useState<SeriesExportCheck | null>(null);
   const [mode, setMode] = useState<'zh' | 'bilingual'>('zh');
   const [continueAfterDecisions,setContinueAfterDecisions] = useState(true);

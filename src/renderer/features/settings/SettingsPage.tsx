@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { APP_VERSION } from '@shared/appVersion';
 import { BackupPanel } from './BackupPanel';
 import { useState, useEffect } from 'react';
@@ -16,7 +17,7 @@ let pendingApiKey = '';
 window.addEventListener('beforeunload', e => { if (pendingApiKey) { e.preventDefault(); e.returnValue = ''; } });
 
 export function SettingsPage() {
-  const { provider, projectSettings, currentSeriesId, theme, setTheme, refreshProvider, refreshSeries, toast } = useApp();
+  const { provider, projectSettings, currentSeriesId, theme, setTheme, refreshProvider, refreshSeries, toast } = useApp(useShallow(s => ({ provider: s.provider, projectSettings: s.projectSettings, currentSeriesId: s.currentSeriesId, theme: s.theme, setTheme: s.setTheme, refreshProvider: s.refreshProvider, refreshSeries: s.refreshSeries, toast: s.toast })));
   const form = useFormDraft('provider', providerDraftFields(provider ?? {}), { page: 'settings', title: '接口设置（不含密钥）' });
   const [apiKey, setApiKey] = useState(pendingApiKey);
   const f = { ...form.value, apiKey };

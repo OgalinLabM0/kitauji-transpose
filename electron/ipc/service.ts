@@ -1,3 +1,4 @@
+import { ReadViews } from '../readViews';
 import { scheduleDataMove } from '../dataLocation';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
@@ -50,12 +51,13 @@ const id = z.string().min(1);
 const ids = z.array(id);
 
 /** 这些是渲染层自动轮询/只读的调用，失败不写任务日志（避免反馈环刷屏），错误只回给调用方 */
-const NO_LOG_ON_ERROR = new Set(['app.getLibraryIdentity', 'app.usage', 'logs.recent', 'logs.clear', 'workflow.progress', 'app.getUiPrefs', 'app.setUiPrefs', 'project.prepStatus', 'project.analysis', 'review.counts']);
+const NO_LOG_ON_ERROR = new Set(['app.getLibraryIdentity', 'app.usage', 'logs.recent', 'logs.page', 'logs.detail', 'logs.clear', 'workflow.progress', 'app.getUiPrefs', 'app.setUiPrefs', 'project.prepStatus', 'project.analysis', 'review.counts']);
 
 NO_LOG_ON_ERROR.add('review.previewLegacyChange');
 
 export class AppService {
   store: ProjectStore;
+  private readonly readViews = new ReadViews(() => this.store.db.path);
   readonly settings = new AppSettings();
   ai: AiClient;
   private current: { kind: 'pipeline'; run: TranslationPipeline } | { kind: 'prep'; run: PrepRunner; abort: AbortController } | { kind: 'import' | 'provider-test'; abort: AbortController } | null = null;
@@ -83,7 +85,7 @@ export class AppService {
     mkdirSync(dataDir, { recursive: true });
     this.store = new ProjectStore(join(dataDir, 'library.sqlite'));
     this.ai = new AiClient(this.store, this.settings.toClientConfig());
-    this.lastLogId = this.store.translations.recentLogs(0, 1_000_000).at(-1)?.id ?? 0;
+    this.lastLogId = this.store.translations.latestLogId();
     new RepairQueue(this.store).recover();
     recoverVolumeRuns(this.store);
     recoverSeriesRuns(this.store);
@@ -107,9 +109,11 @@ export class AppService {
     if (this.disposed) return Promise.resolve();
     this.closing = true; this.stopRepairs = true;
     this.clearServiceTimers();
+    const queriesStopped = this.readViews.cancel();
     this.cancelCurrent();
     this.disposePromise = (async () => {
       // A maintenance operation may still be reading/writing its backup. Never close its store.
+      await queriesStopped;
       await this.maintenanceFinished;
       this.maintenance = true;
       await this.backgroundSettled();
@@ -163,11 +167,13 @@ export class AppService {
     this.maintenance = true; this.stopRepairs = true;
     if (!options.preserveLibraryIdentity) this.emit('library-identity', 'blocked');
     this.clearServiceTimers();
+    const queriesStopped = this.readViews.cancel();
     let release!: () => void;
     this.maintenanceFinished = new Promise<void>(resolve => { release = resolve; });
     let epoch = this.cancelEpoch;
     const checkpoint = () => this.assertMaintenanceCurrent(epoch);
     try {
+      await queriesStopped;
       this.cancelCurrent();
       epoch = this.cancelEpoch;
       await this.waitBounded(this.tasks.settled(), 10_000, '后台任务尚未结束，已取消数据维护并保留原书库；任务结束后可重试');
@@ -347,7 +353,7 @@ export class AppService {
   private flushLogs(): void {
     if (this.maintenance || this.closing || this.disposed) return;
     try {
-      const logs = this.store.translations.recentLogs(this.lastLogId, 200);
+      const logs = this.store.translations.recentLogs(this.lastLogId, 200, true);
       for (const l of logs) { this.emit('log', l satisfies ActivityLogEntry); this.lastLogId = l.id; }
     } catch { /* Polling failures must not escape a timer or recursively write logs. */ }
   }
@@ -581,8 +587,8 @@ export class AppService {
         },
         listChapters: (vid) => s.projects.listChapters(id.parse(vid)),
         referenceTranslations: (vid) => s.archives.referenceTranslations(id.parse(vid)),
-        listParagraphs: (cid) => withAuditStatus(s, s.projects.listParagraphViews(id.parse(cid))),
-        listParagraphsByVolume: (vid) => withAuditStatus(s, s.projects.listParagraphViewsByVolume(id.parse(vid))),
+        listParagraphs: cid => this.readViews.read('chapter', id.parse(cid)),
+        listParagraphsByVolume: vid => this.readViews.read('volume', id.parse(vid)),
         getParagraph: (pid) => { const p = s.projects.getParagraphView(id.parse(pid)); return p ? withAuditStatus(s, [p])[0]! : null; },
         getSettings: (sid) => s.projects.getSettings(id.parse(sid)),
         setSetting: (sid, key, value) => { s.projects.setSetting(id.parse(sid), key, value as ProjectSettings[typeof key]); this.changed('settings'); return s.projects.getSettings(sid); },
@@ -592,37 +598,7 @@ export class AppService {
           const arr = (j: string | null): string[] => { try { const v = JSON.parse(j ?? '[]'); return Array.isArray(v) ? v.map(String) : []; } catch { return []; } };
           return { speakerId: a.speaker_char_id, speakerName: a.speaker_char_id ? nm(a.speaker_char_id) : null, speakerConfidence: a.speaker_confidence, targets: arr(a.target_char_ids).map(nm), present: arr(a.present_char_ids).map(nm), intent: a.intent, difficultyFlags: arr(a.difficulty_flags), evidenceIds: arr(a.evidence_ids) };
         },
-        prepStatus: (vid): PrepStatus => {
-          const volumeId = id.parse(vid);
-          const pids = s.projects.listParagraphIdsByVolume(volumeId);
-          const analyses = s.projects.analysesFor(pids);
-          for (const pid of analyses.keys()) if (!s.projects.sceneObservation(pid)) analyses.delete(pid);
-          const seriesId = s.projects.getVolumeSeriesId(volumeId);
-          const chars = s.knowledge.listCharacters(seriesId);
-          const terms = s.glossary.activeTerms(seriesId);
-          const queue = s.translations.listQueue(seriesId, 'pending');
-          // 对话段 / 其中识别出说话人的段：衡量场景分析的实际产出，而不只是"跑过了"
-          const placeholders = pids.map(() => '?').join(',');
-          const dialogues = pids.length ? (s.db.get<{ c: number }>(`SELECT COUNT(*) c FROM paragraphs WHERE paragraph_type IN ('dialogue','mixed') AND id IN (${placeholders})`, pids)?.c ?? 0) : 0;
-          let speakersIdentified = 0;
-          for (const [pid, a] of analyses) if (a.speaker_char_id) { const p = s.projects.getParagraph(pid); if (p && p.paragraphType !== 'narration') speakersIdentified++; }
-          const translated = pids.length ? (s.db.get<{ c: number }>(`SELECT COUNT(DISTINCT paragraph_id) c FROM translation_finals WHERE paragraph_id IN (${placeholders})`, pids)?.c ?? 0) : 0;
-          return {
-            preRead: s.projects.prepDoneChapters('preread', volumeId).size === s.projects.listChapters(volumeId).length, termsExtracted: s.projects.prepDoneChapters('terms', volumeId).size === s.projects.listChapters(volumeId).length, scenesAnalyzed: analyses.size, total: pids.length,
-            chapters: s.projects.listChapters(volumeId).length, prereadChapters: s.projects.prepDoneChapters('preread', volumeId).size, termsChapters: s.projects.prepDoneChapters('terms', volumeId).size,
-            characters: chars.length, charactersNamed: chars.filter(c => c.canonical_name_zh).length,
-            relationships: s.knowledge.relationshipViews(seriesId).length, events: s.db.get<{ c: number }>('SELECT COUNT(*) c FROM narrative_events WHERE series_id=?', [seriesId])?.c ?? 0,
-            genderPending: queue.filter(q => q.kind === 'gender-plural').length, stalePending: queue.filter(q => q.kind === 'stale-knowledge').length,
-            quirkPending: queue.filter(q => q.kind === 'quirk-candidate').length, quirksLocked: chars.reduce((n, c) => n + s.knowledge.quirks(c.id).filter(q => q.confirmed_by_user).length, 0),
-            terms: terms.length, termsUndecided: terms.filter(t => !t.term_zh).length, termProposalsPending: queue.filter(q => q.kind === 'term-proposal').length,
-            dialogues, speakersIdentified,
-            honorificsTotal: s.db.get<{ c: number }>(`SELECT COUNT(*) c FROM review_queue WHERE series_id=? AND kind='honorific-first'`, [seriesId])?.c ?? 0,
-            honorificsPending: queue.filter(q => q.kind === 'honorific-first').length,
-            addressesConfirmed: s.db.get<{ c: number }>('SELECT COUNT(*) c FROM address_trajectories WHERE series_id=? AND confirmed_by_user=1', [seriesId])?.c ?? 0,
-            honorificsNeedingCandidates: queue.filter(q => q.kind === 'honorific-first' && !('candidates' in q.payload)).length,
-            recheckPending: s.translations.pendingRechecks(pids).length, translated,
-          };
-        },
+        prepStatus: vid => this.readViews.read('prep', id.parse(vid)),
       },
       workflow: {
         deliveryState: sid => deliveryState(this.store, id.parse(sid)),
@@ -1025,7 +1001,12 @@ export class AppService {
         qualityGate: (vid) => runQualityGate(s, id.parse(vid)),
         run: (vid, mode, outputPath, preview) => this.withTask(() => exportVolume(s, { volumeId: id.parse(vid), mode, outputPath, preview }, atomicWriteFile)),
       },
-      logs: { recent: (after, limit) => s.translations.recentLogs(after, limit ?? 200), clear: () => s.translations.clearLogs() },
+      logs: {
+        recent: (after, limit) => s.translations.recentLogs(z.number().int().nonnegative().parse(after), z.number().int().min(1).max(1000).parse(limit ?? 200), true),
+        page: options => s.translations.logPage(z.object({ beforeId: z.number().int().positive().optional(), level: z.enum(['all','warning','error']).optional(), workstation: z.string().max(100).optional(), search: z.string().max(500).optional() }).parse(options ?? {})),
+        detail: (logId, offset) => s.translations.logDetail(z.number().int().positive().parse(logId), z.number().int().nonnegative().parse(offset ?? 0)),
+        clear: () => { const count = s.translations.clearLogs(); this.lastLogId = s.translations.latestLogId(); return count; },
+      },
     };
   }
 
