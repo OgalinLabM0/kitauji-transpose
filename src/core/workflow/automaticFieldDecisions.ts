@@ -1,3 +1,4 @@
+import { undoReviewName } from './reviewNameRepair';
 import {reopenRelationshipTermination} from './relationshipTerminationReview';
 import {reopenFieldAttributionDismissal} from './fieldAttributionReview';
 import { JOURNALED_KINDS, undoKnowledgeDecision } from './knowledgeDecisionJournal';
@@ -92,8 +93,15 @@ export function undoAutomaticFieldDecision(store: ProjectStore, characterId: str
 }
 
 /** Route the legacy review-page undo through the same real restoration for automatic fields. */
-export function undoResolvedReview(store: ProjectStore, queueId: string): void {
+export function undoResolvedReview(store: ProjectStore, queueId: string, single = false): void {
   const item = store.translations.getQueueItem(queueId);
+  if(!single && Array.isArray(item?.payload.equivalentDecisionIds)) {
+    store.transaction(()=>{const ids=item.payload.equivalentDecisionIds as string[];
+      for(const id of ids){const row=store.translations.getQueueItem(id);if(!row||row.series_id!==item.series_id||row.status!==item.status||row.status==='pending'||JSON.stringify(row.payload.equivalentDecisionIds)!==JSON.stringify(ids))throw Error('同形术语已被后续操作改变，不能整组撤销');}
+      for(const id of ids)undoResolvedReview(store,id,true);
+    });return;
+  }
+  if(item?.payload.nameRepair){store.transaction(()=>undoReviewName(store,queueId));return;}
   const c = item?.payload as unknown as Payload | undefined;
   if (item?.payload.automaticRelationshipTerminationReview && !(item.payload.automaticRelationshipTerminationReview as {undoneAt?:string}).undoneAt) reopenRelationshipTermination(store,queueId,true);
   else if (item?.payload.automaticCharacterInvalidationReview && !(item.payload.automaticCharacterInvalidationReview as {undoneAt?:string}).undoneAt) reopenCharacterInvalidation(store,queueId,true);

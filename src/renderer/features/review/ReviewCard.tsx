@@ -141,7 +141,7 @@ function ReviewCardForm({ item, compact, active, onSelect, onPreselect, disabled
     const scope = currentDraftSession();
     lock.current = true; setBusy(true);
     try {
-      const r = await tryApi(() => api.review.decide(item.id, { ...d, ...(item.kind === 'review-block' && d.action === 'edit' ? { base: draft.base } : {}), kind: item.kind } as DecisionPayload));
+      const r = await tryApi(() => api.review.decide(item.id, { ...d, ...(item.kind==='term-proposal'&&Array.isArray(pl.equivalentQueueIds)?{equivalentQueueIds:pl.equivalentQueueIds}:{}), ...(item.kind === 'review-block' && d.action === 'edit' ? { base: draft.base } : {}), kind: item.kind } as DecisionPayload));
       if (!mounted.current || scope !== currentDraftSession()) return;
       if (r?.ok) {
         // Captured-record comparison protects edits made after submission.
@@ -230,6 +230,7 @@ function ReviewCardForm({ item, compact, active, onSelect, onPreselect, disabled
       helpText = '请确定这个专名、称呼或作品用语的中文译法。确认后全书都用这个译名，会写入术语表。可以选音译、意译，也可以自己输入。';
       const cands = (Array.isArray(pl.candidates) ? pl.candidates : []).filter((c: any) => c && typeof c.zh === 'string' && c.zh.trim()) as { zh: string; basis?: string; pros?: string; cons?: string }[];
       body = <>
+        {Array.isArray(pl.equivalentForms)&&<p className="notice small">以下仅全半角不同的写法合并确认：{pl.equivalentForms.join(' / ')}。本次确认会统一这些写法的译名，保留原文。</p>}
         {reading && <div className="small muted" style={{ marginBottom: 8 }}>假名读音：<b>{reading}</b>（罗马音，非英文词源）</div>}
         {(pl.examples as { text: string }[] | undefined)?.slice(0, 2).map((e, i) => <div key={i} className="small faint" style={{ fontFamily: 'var(--font-reading)' }}>{e.text}</div>)}
         <details className="english-ruby-form" open={!!englishForm.value.english || undefined}>
@@ -306,13 +307,17 @@ function ReviewCardForm({ item, compact, active, onSelect, onPreselect, disabled
       helpText = '全书检查发现某个已记录的信息可能过时了或前后矛盾。你判断一下是真的过时了需要标记失效，还是误报需要保留。';
       body = <><div className="small">{pl.description}</div><div className="btn-group" style={{ marginTop: 8 }}><B primary onClick={() => decide({ action: 'accept' })}>标记失效</B><B onClick={() => decide({ action: 'reject' })}>保留</B></div></>; break;
     case 'warning':
+      if(typeof pl.candidateName==='string'&&typeof pl.claimedCharacter==='string'){
+        helpText='人物关联还未补全。点下方按钮，程序会核验原文、姓名称谓和现有档案；证据明确才添加别名。无法确定时保留此项，不乱建人物或静默忽略。';
+        body=<><p className="small">待核对：{pl.candidateName} → {pl.claimedCharacter}</p><B primary onClick={()=>decide({action:'repair-name'})}>核对并补全人物关联</B><p className="small muted">不确定时可用上方中文助手分析；暂时无法判断就先处理下一项。</p></>;break;
+      }
       if (pl.type === 'CHAPTER_READING') {
         helpText = '这项章级连读问题会阻止正式导出。整册任务会先核对原文，必要时定点修复；证据不足、人工稿或自动处理未通过时保留此项。查看原译文并处理后，可继续整册任务重新核查。';
         body = <><p className="small">{pl.description}</p><p className="small muted">原文核对任务：{pl.sourceTask}</p>{typeof pl.chapterRecovery?.message === 'string' && <p className="small">最近自动处理：{pl.chapterRecovery.message}</p>}<DiagnosticDetails value={pl.evidence} label="查看相邻原译文证据" />{item.paragraphId && <B onClick={() => { void tryApi(() => useApp.getState().jumpToParagraph(item.paragraphId!)); }}>查看原译文并处理</B>}</>;
         break;
       }
       helpText = '发现一个不影响导出的问题，提醒你注意一下。确认「知道了」后可以继续。';
-      body = <>{pl.note && (needsDiagnosticSummary(String(pl.note)) ? <DiagnosticDetails value={pl.note} /> : <div className="small" style={{ marginBottom: 8 }}>{String(pl.note)}</div>)}<div className="btn-group"><B onClick={() => decide({ action: 'dismiss' })}>知道了 / 忽略</B></div></>; break;
+      body = <>{pl.note && (needsDiagnosticSummary(String(pl.note)) ? <DiagnosticDetails value={pl.note} /> : <div className="small" style={{ marginBottom: 8 }}>{String(pl.note)}</div>)}<div className="btn-group"><B onClick={() => decide({ action: 'dismiss' })}>关闭提醒（不修改资料）</B></div></>; break;
   }
 
   // AI推荐指示器

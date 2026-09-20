@@ -1,3 +1,5 @@
+import { repairReviewName } from './reviewNameRepair';
+import { termWidthKey } from './reviewTermForms';
 import { englishRubyNotes, englishRubySchema } from './termEnglishRuby';
 import {inheritForeignNotes} from './foreignNotes';
 import { beginKnowledgeDecision, finishKnowledgeDecision } from './knowledgeDecisionJournal';
@@ -18,12 +20,12 @@ export type Decision =
   | { kind: 'honorific-first'; action: 'choose'; zh: string; allowVariation?: boolean; relationStage?: string | null; applyToText?: boolean }
   | { kind: 'quirk-candidate'; action: 'confirm' | 'reject'; pattern?: string }
   | { kind: 'gender-plural'; action: 'confirm' | 'set'; gender?: string | null; plurality?: string }
-  | { kind: 'term-proposal'; action: 'choose' | 'reject'; zh?: string; lockLevel?: 'confirmed' | 'hard-locked'; acceptVariants?: boolean; englishRuby?: { english: string; gloss: string } }
+  | { kind: 'term-proposal'; action: 'choose' | 'reject'; zh?: string; lockLevel?: 'confirmed' | 'hard-locked'; acceptVariants?: boolean; equivalentQueueIds?: string[]; englishRuby?: { english: string; gloss: string } }
   | { kind: 'wordplay'; action: 'accept' | 'custom' | 'literal'; zh?: string; notes?: string | null }
   | { kind: 'ambiguity'; action: 'confirm' | 'set'; zh?: string; addAsSense?: boolean; createTerm?: boolean; termType?: string }
   | { kind: 'glossary-deviation'; action: 'accept-here' | 'add-sense' | 'revert'; senseGloss?: string | null; contextHint?: string | null }
   | { kind: 'stale-knowledge'; action: 'accept' | 'reject' }
-  | { kind: 'warning'; action: 'dismiss' };
+  | { kind: 'warning'; action: 'dismiss' | 'repair-name' };
 
 export interface DecisionResult { ok: boolean; message: string; recheckCount: number; retranslate: string[] }
 
@@ -36,6 +38,23 @@ export class DecisionService {
     if (item.status !== 'pending') return { ok: false, message: '该复核项已处理，请刷新后重试', recheckCount: 0, retranslate: [] };
     if (item.kind !== d.kind) return { ok: false, message: `决定类型 ${d.kind} 与队列项 ${item.kind} 不匹配`, recheckCount: 0, retranslate: [] };
     if (!KIND_ACTIONS[d.kind]?.includes(d.action)) return { ok: false, message: '此类复核不支持该操作', recheckCount: 0, retranslate: [] };
+    if (d.kind === 'term-proposal' && d.equivalentQueueIds?.length) {
+      try { return this.store.transaction(() => {
+        const ids=[...new Set([queueItemId,...d.equivalentQueueIds!])];
+        if(ids.length>100)throw Error('合并确认项过多，请刷新列表');
+        const base=this.store.glossary.activeTerms(item.series_id).find(t=>t.id===item.payload.termId);
+        if(!base)throw Error('术语已不存在');
+        const rows=ids.map(id=>this.store.translations.getQueueItem(id));
+        for(const row of rows){
+          const term=row&&this.store.glossary.activeTerms(item.series_id).find(t=>t.id===row.payload.termId);
+          if(!row||row.series_id!==item.series_id||row.kind!=='term-proposal'||row.status!=='pending'||!term||term.lock_level!=='suggested'||termWidthKey(term.term_jp)!==termWidthKey(base.term_jp))throw Error('同形术语已改变或已有人工确认，请刷新后核对；本次未修改');
+        }
+        const {equivalentQueueIds: _group, ...oneDecision}=d;
+        const results=ids.map(id=>{const result=this.apply(id,{...oneDecision});if(!result.ok)throw Error(result.message);return result;});
+        for(const id of ids){const row=this.store.translations.getQueueItem(id)!;this.store.translations.updateQueuePayload(id,{...row.payload,equivalentDecisionIds:ids});}
+        return {ok:true,message:d.action==='choose'?`已统一确认 ${ids.length} 个全半角写法`:`已一并排除 ${ids.length} 个全半角写法`,recheckCount:results.reduce((n,r)=>n+r.recheckCount,0),retranslate:results.flatMap(r=>r.retranslate)};
+      }); } catch(error){return {ok:false,message:error instanceof Error?error.message:String(error),recheckCount:0,retranslate:[]};}
+    }
     const pl = item.payload as Record<string, any>;
     const seriesId = item.series_id;
     const para = item.paragraph_id ? this.store.projects.getParagraph(item.paragraph_id) : undefined;
@@ -189,7 +208,11 @@ export class DecisionService {
           }
           message = d.action === 'accept' ? '知识已标记失效' : '已保留'; break;
 
-        case 'warning': message = '已忽略'; break;
+        case 'warning':
+          if(d.action==='repair-name'){try{message=repairReviewName(this.store,queueItemId);}catch(error){failed=error instanceof Error?error.message:String(error);}}
+          else if(typeof pl.candidateName==='string'&&typeof pl.claimedCharacter==='string'){failed='人物归属尚未解决，不能作为普通提醒忽略；请核对并补全或保留待处理';}
+          else message='已忽略';
+          break;
       }
       if (!failed) {
         if (journal) finishKnowledgeDecision(this.store,queueItemId,journal);
@@ -240,5 +263,6 @@ export const KIND_ACTIONS: Record<ReviewKind, string[]> = {
   failed: ['retry', 'dismiss'], 'review-block': ['accept-as-is', 'edit'], 'lock-conflict': ['keep-lock', 'change-lock'],
   'honorific-first': ['choose'], 'quirk-candidate': ['confirm', 'reject'], 'gender-plural': ['confirm', 'set'],
   'term-proposal': ['choose', 'reject'], wordplay: ['accept', 'custom', 'literal'], ambiguity: ['confirm', 'set'],
-  'glossary-deviation': ['accept-here', 'add-sense', 'revert'], 'stale-knowledge': ['accept', 'reject'], warning: ['dismiss'],
+  'glossary-deviation': ['accept-here', 'add-sense', 'revert'], 'stale-knowledge': ['accept', 'reject'], warning: ['dismiss', 'repair-name'],
 };
+

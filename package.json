@@ -1,7 +1,7 @@
 {
   "name": "kitauji-transpose",
   "productName": "北宇治译奏部",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "private": true,
   "description": "KitaUji Transpose：日文轻小说翻译与校对工作台",
   "type": "module",
@@ -16,9 +16,11 @@
     "test": "cross-env TSX_TSCONFIG_PATH=tsconfig.test.json node --import tsx --disable-warning=ExperimentalWarning --test \"tests/**/*.test.ts\"",
     "dev:renderer": "vite",
     "dev:preview": "vite --config vite.preview.config.ts --mode browser-preview --host 127.0.0.1 --port 4176 --strictPort",
+    "test:preview": "cross-env TSX_TSCONFIG_PATH=tsconfig.test.json node --import tsx --test tests/preview.test.ts",
     "dev": "npm run build:electron && cross-env-shell VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "start": "npm run build && electron .",
-    "gen:prompts": "cross-env TSX_TSCONFIG_PATH=tsconfig.electron.json node --import tsx scripts/gen-prompts.ts"
+    "gen:prompts": "cross-env TSX_TSCONFIG_PATH=tsconfig.electron.json node --import tsx scripts/gen-prompts.ts",
+    "e2e:real": "cross-env TSX_TSCONFIG_PATH=tsconfig.test.json node --import tsx --disable-warning=ExperimentalWarning scripts/real-e2e.ts"
   },
   "engines": {
     "node": ">=22.12.0"

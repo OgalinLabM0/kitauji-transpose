@@ -1,3 +1,4 @@
+import { groupTermForms } from './reviewTermForms';
 import { termReviewMatcher } from './termConfirmation';
 import type { ProjectStore } from '@core/db';
 import type { ParagraphView } from '@shared/types';
@@ -10,13 +11,14 @@ import { appliedChangeIssues } from './appliedChangeSources';
 
 export function scopedReview(store: ProjectStore, seriesId: string, status: 'pending'|'resolved'|'dismissed' = 'pending', volumeId?: string) {
   const items = store.translations.listQueue(seriesId, status);
-  if (!volumeId) return items;
+  if (!volumeId) return status === 'pending' ? groupTermForms(store,items) : items;
   if (store.projects.getVolumeSeriesId(volumeId) !== seriesId) throw new Error('本册不属于当前系列');
   const ids = store.projects.listParagraphIdsByVolume(volumeId);
   const within = new Set(ids);
   const through = Math.max(-1, ...ids.map(id => store.projects.getParagraph(id)!.seriesOrdinal));
   const termInVolume = termReviewMatcher(store, volumeId);
-  return items.filter(q => !q.paragraphId || within.has(q.paragraphId) || termInVolume(q) || (q.payload.subtype === 'character-field' && Number(q.payload.at) <= through));
+  const scoped = items.filter(q => !q.paragraphId || within.has(q.paragraphId) || termInVolume(q) || (q.payload.subtype === 'character-field' && Number(q.payload.at) <= through));
+  return status === 'pending' ? groupTermForms(store,scoped) : scoped;
 }
 export function withAuditStatus(store: ProjectStore, views: ParagraphView[]): ParagraphView[] {
   return views.map(p => { const final = store.translations.latestFinal(p.id); return { ...p, audit: final ? auditStatus(store, final) : 'missing' }; });
