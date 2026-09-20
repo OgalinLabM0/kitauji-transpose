@@ -142,8 +142,7 @@ export class KnowledgeRepo {
   static isSafeAutoAlias(canonical: string, alias: string): boolean {
     const raw = alias.trim();
     const strip = (v: string): string => v.trim().replace(/(さん|ちゃん|くん|君|様|さま|先輩|先生|殿|どの|氏|たん|中尉|大尉|少尉|少佐|中佐|大佐|軍曹|伍長|曹長|准尉|魔導少尉|魔導中尉|魔導士官|候補生|一号生|二号生)$/g, '').trim();
-    const stripTitle = (v: string): string => v.replace(/^(?:ミスター|ミセス|ミス|ドクター)[・･\s]+/u, '');
-    const c = strip(stripTitle(canonical.trim())), a = strip(stripTitle(raw));
+    const c = strip(canonical), a = strip(raw);
     if (!c || !a || raw === canonical || KnowledgeRepo.isGenericName(a)) return false;
     if (c === a) return true; // 全名 + 军衔/身份后缀
     const split = (v: string): string[] => v.split(/[・･=＝\s　]+/).filter(Boolean);

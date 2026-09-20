@@ -1,3 +1,4 @@
+import {supportedNameForm} from '../src/core/workflow/reviewNameRepair';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {fixture} from './helpers';
@@ -43,4 +44,11 @@ test('changed or semantically different term cannot be smuggled into grouped con
 
 test('group rejection can restore both original terms through one undo',t=>{
  const f=terms();t.after(()=>f.store.close());const result=new DecisionService(f.store).apply(f.a.q,{kind:'term-proposal',action:'reject',equivalentQueueIds:[f.b.q]});assert.ok(result.ok);assert.equal(f.store.glossary.activeTerms(f.seriesId).length,1);undoResolvedReview(f.store,f.a.q);assert.equal(f.store.glossary.activeTerms(f.seriesId).length,3);
+});
+
+test('titles never collapse spouses or choose among a surname and another full name',t=>{
+ assert.equal(supportedNameForm('ミスター・ベル','ミセス・ベル'),false);assert.equal(supportedNameForm('アン・ベル','ミスター・ベル'),false);
+ const f=fixture('ミスター・ベルが来た。');t.after(()=>f.store.close());
+ f.store.knowledge.upsertCharacter({seriesId:f.seriesId,introducedVolume:1,nameJp:'ベル'});f.store.knowledge.upsertCharacter({seriesId:f.seriesId,introducedVolume:1,nameJp:'アン・ベル'});
+ const q=f.store.translations.enqueue({seriesId:f.seriesId,paragraphId:f.paragraphId,kind:'warning',title:'ambiguous',payload:{candidateName:'ミスター・ベル',claimedCharacter:'ベル'}});assert.equal(new DecisionService(f.store).apply(q,{kind:'warning',action:'repair-name'}).ok,false);assert.equal(f.store.translations.getQueueItem(q)!.status,'pending');
 });

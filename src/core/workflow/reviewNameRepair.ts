@@ -2,6 +2,11 @@ import type { ProjectStore } from '../db';
 import { KnowledgeRepo } from '../db/knowledgeRepo';
 import { containsVisibleQuote } from '../validation/nameEvidence';
 
+const prefix = /^(?:ミスター|ミセス|ミス|ドクター)[・･\s]+/u;
+export function supportedNameForm(canonical:string,candidate:string):boolean {
+  if(prefix.test(candidate)) return !prefix.test(canonical) && candidate.replace(prefix,'')===canonical;
+  return KnowledgeRepo.isSafeAutoAlias(canonical,candidate);
+}
 /** Repair a legacy warning using current evidence. Never infer an unknown identity. */
 export function repairReviewName(store: ProjectStore, queueId: string): string {
   const item = store.translations.getQueueItem(queueId);
@@ -17,7 +22,8 @@ export function repairReviewName(store: ProjectStore, queueId: string): string {
   const owners=characters.filter(c=>c.canonical_name_jp===candidateName || store.knowledge.aliasesAt(c.id,para.seriesOrdinal).includes(candidateName));
   if(owners.some(c=>c.id!==target.id))throw Error('这个名字已关联其他人物，不能自动合并；请用中文助手核对，提醒已保留');
   if(owners.length)return `已核对：「${candidateName}」已有正确的人物关联`;
-  if(!KnowledgeRepo.isSafeAutoAlias(target.canonical_name_jp,candidateName))throw Error('目前不能从姓名和称谓确定是同一人，未添加或忽略；请用中文助手比较原文依据');
+  if(characters.some(c=>c.id!==target.id && (supportedNameForm(c.canonical_name_jp,candidateName)||KnowledgeRepo.isSafeAutoAlias(c.canonical_name_jp,candidateName.replace(prefix,'')))))throw Error('存在同名或同姓人物，称谓不足以区分身份；未添加，提醒已保留');
+  if(!supportedNameForm(target.canonical_name_jp,candidateName))throw Error('目前不能从姓名和称谓确定是同一人，未添加或忽略；请用中文助手比较原文依据');
   store.knowledge.addAlias(target.id,candidateName,'pre-read',null,[para.id]);
   store.translations.updateQueuePayload(queueId,{...item.payload,nameRepair:{characterId:target.id,alias:candidateName,created:true,observations:store.db.all('SELECT o.* FROM character_alias_observations o JOIN character_aliases a ON a.id=o.alias_id WHERE a.character_id=? AND a.alias_jp=? ORDER BY o.id',[target.id,candidateName])}});
   for(const p of store.projects.translatedParagraphsContaining(item.series_id,candidateName))store.translations.addRecheck(p.id,'user-decision','人物称谓关联已补全，需要回查');
