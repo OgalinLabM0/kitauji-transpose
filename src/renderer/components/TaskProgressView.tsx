@@ -34,7 +34,7 @@ export function TaskProgressView({ progress, state, live }: { progress: Workflow
   const stages = ['预读与准备', '必要确认', '翻译与检查', '保存成品'];
   const hasCount = phase !== 'export' && !!detail && Number.isFinite(detail.total) && detail.total > 0 && Number.isFinite(detail.done) && detail.done >= 0;
   const pct = hasCount ? Math.min(100, Math.floor(detail.done / detail.total * 100)) : null;
-  return <div className="task-progress-view">
+  return <div className={'task-progress-view'+(done?' is-complete':'')}>
     <ol className="task-stages" aria-label="自动处理步骤">{stages.map((label, index) => <li key={label} className={done || index < stage ? 'complete' : index === stage ? 'current' : ''} aria-current={!done && index === stage ? 'step' : undefined}><span>{done || index < stage ? '✓' : index + 1}</span>{label}</li>)}</ol>
     {!done && step && phase !== 'export' && <div className="task-scope-line" aria-label="流程步骤"><strong>{step.stage === 'preparation' ? '预处理' : '翻译与检查'} · 第 {step.index}/{step.total} 步：{step.label}</strong><span>本阶段后续 {step.total - step.index} 步{step.stage === 'preparation' ? '；之后进行翻译与检查，再保存成品' : '；通过后保存成品'}</span></div>}
     <div className="task-progress-heading"><strong>{done ? '成品已保存' : waiting ? '等待确认 · ' + state.waitingDecisionIds!.length + ' 项' : phaseLabel}</strong>
@@ -42,7 +42,7 @@ export function TaskProgressView({ progress, state, live }: { progress: Workflow
       {done && <span className="task-step-count">全部检查通过</span>}
     </div>
     {!done && hasCount && <div className={'task-wide-progress' + (progress.paused || state?.status === 'stopped' || state?.status === 'attention' ? ' paused' : '')} role="progressbar" aria-label={phaseLabel + '进度'} aria-valuemin={0} aria-valuemax={detail.total} aria-valuenow={Math.min(detail.done, detail.total)} aria-valuetext={detail.done + ' / ' + detail.total + ' ' + detail.unit + '，' + pct + '%'}><i style={{ width: pct + '%' }} /></div>}
-    {!done && !hasCount && live && <p className="task-count-pending">{phase === 'export' ? '正在写入成品文件，保存完成后可直接打开。' : '正在处理，等待当前步骤的完成数量…'}</p>}
+    {!done && !hasCount && live && <p className="task-count-pending">{progress.phase === 'review-assistant' ? '正在解释当前待确认项，书稿与译名仍等你确认。' : phase === 'export' ? '正在写入成品文件，保存完成后可直接打开。' : '正在处理，等待当前步骤的完成数量…'}</p>}
     {(detail?.chapterTitle || state?.run) && <div className="task-scope-line">{detail?.chapterTitle && <span className="task-chapter-title" title={detail.chapterTitle}>{detail.chapterTitle}</span>}{state?.run && <span>全任务已检查 <b>{state.run.done} / {state.run.total}</b> 册</span>}</div>}
   </div>;
 }

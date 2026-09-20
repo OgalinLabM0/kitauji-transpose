@@ -165,6 +165,7 @@ export interface Api {
   };
   // ---- 复核队列 ----
   review: {
+    assistant(queueItemId: string, question?: string): Promise<import('./reviewAssistant').ReviewAssistantConversation | null>;
     list(seriesId: string, status?: 'pending' | 'resolved' | 'dismissed', volumeId?: string): Promise<ReviewItemView[]>;
     counts(seriesId: string, volumeId?: string): Promise<Record<string, number>>;
     decide(queueItemId: string, decision: DecisionPayload): Promise<DecisionOutcome>;

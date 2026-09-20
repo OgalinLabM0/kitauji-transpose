@@ -55,7 +55,7 @@ export interface ParagraphView {
   volumeId: string; audit?: 'valid' | 'missing' | 'stale';
   id: string; chapterId: string; sceneId: string; seriesOrdinal: number; paraOrdinal: number;
   sourceText: string; paragraphType: ParagraphType;
-  final: { text: string; notes?: string[]; autoAccepted: boolean; confirmed: boolean; version: number } | null;
+  final: { text: string; ruby?: {start:number;end:number;rt:string}[]; notes?: string[]; autoAccepted: boolean; confirmed: boolean; version: number } | null;
   latestCandidate: { text: string; workstationId: WorkstationId } | null;
   openFindings: number; blocking: boolean;
   analysis: { speakerName: string | null; speakerConfidence: number | null; intent: string | null } | null;

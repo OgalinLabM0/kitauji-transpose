@@ -1,3 +1,4 @@
+import { englishRubyRules, englishRubyMarks } from '../workflow/termEnglishRuby';
 import { withIdentityRead } from './identitySources';
 import {foreignNoteTexts} from '../workflow/foreignNotes';
 import { preReadInputsCurrent } from './narrativeSources';
@@ -269,6 +270,8 @@ export class ProjectRepo {
   getParagraphView(paragraphId: string): ParagraphView | null { return this.paragraphViews('p.id=?', [paragraphId])[0] ?? null; }
   listParagraphViewsByVolume(volumeId: string): ParagraphView[] { return this.paragraphViews('s.chapter_id IN (SELECT id FROM chapters WHERE volume_id=?)', [volumeId]); }
   private paragraphViews(where: string, params: string[]): ParagraphView[] {
+    const ruleCache=new Map<string,ReturnType<typeof englishRubyRules>>();
+    const ruby=(r:Record<string,unknown>)=>{const volume=String(r.volume_id);let rules=ruleCache.get(volume);if(!rules){rules=englishRubyRules(this.db,this.getVolumeSeriesId(volume));ruleCache.set(volume,rules);}return englishRubyMarks(String(r.source_text),String(r.final_text),rules);};
     return this.db.all<Record<string, unknown>>(`
       SELECT p.id, s.chapter_id, (SELECT volume_id FROM chapters WHERE id=s.chapter_id) volume_id, p.scene_id, p.series_ordinal, p.para_ordinal, p.source_text, p.paragraph_type,
         f.final_text, fc.flags final_flags, f.auto_accepted, f.confirmed_by_user, f.version,
@@ -287,7 +290,7 @@ export class ProjectRepo {
         id: r.id as string, volumeId: r.volume_id as string, chapterId: r.chapter_id as string, sceneId: r.scene_id as string,
         seriesOrdinal: r.series_ordinal as number, paraOrdinal: r.para_ordinal as number,
         sourceText: r.source_text as string, paragraphType: r.paragraph_type as ParagraphType,
-        final: r.final_text != null ? { text: r.final_text as string, notes: (()=>{try{return foreignNoteTexts(r.source_text as string,r.final_text as string,JSON.parse((r.final_flags as string|null)??'[]'));}catch{return [];}})(), autoAccepted: !!r.auto_accepted, confirmed: !!r.confirmed_by_user, version: r.version as number } : null,
+        final: r.final_text != null ? { text: r.final_text as string, ruby: ruby(r), notes: (()=>{try{return foreignNoteTexts(r.source_text as string,r.final_text as string,JSON.parse((r.final_flags as string|null)??'[]'));}catch{return [];}})(), autoAccepted: !!r.auto_accepted, confirmed: !!r.confirmed_by_user, version: r.version as number } : null,
         latestCandidate: r.candidate_text != null ? { text: r.candidate_text as string, workstationId: r.cand_ws as WorkstationId } : null,
         openFindings: r.open_findings as number, blocking: (r.blocking as number) > 0,
         analysis: r.speaker_confidence != null || r.intent != null

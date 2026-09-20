@@ -150,6 +150,7 @@ export function createPreviewApi(notify: (message: string) => void = () => {}): 
       },
     },
     review: {
+      assistant: deny('待确认助手需要正式模型接口'),
       list: async (sid, status, vid) => reviews(sid, status, vid),
       counts: async (sid, vid) => { const counts: Record<string, number> = {}; for (const r of reviews(sid, 'pending', vid)) counts[r.kind] = (counts[r.kind] ?? 0) + 1; return counts; },
       previewLegacyChange: deny('预览旧知识人工重新确认（演示无旧记录）'), reconfirmLegacyChange: deny('保存旧知识人工重新确认'), undoLegacyReconfirmation: deny('撤销本次人工重新确认'),

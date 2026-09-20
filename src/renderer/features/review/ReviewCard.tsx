@@ -1,3 +1,4 @@
+import { ReviewAssistant } from './ReviewAssistant';
 import { kanaReading } from '@shared/kanaReading';
 import { visibleNameSource } from '../../../core/validation/nameEvidence';
 import { useDraft, currentDraftSession } from '../../store/useDraft';
@@ -32,7 +33,7 @@ function B({ children, primary, onClick, disabled }: { children: ReactNode; prim
 }
 function Choice({ v, label, why }: { v: string; label: ReactNode; why?: string }) {
   const { busy, pick, setPick } = useContext(Ctx);
-  return <div className={`choice${pick === v ? ' on' : ''}`} onClick={() => { if (!busy) setPick(v); }}><input type="radio" disabled={busy} readOnly checked={pick === v} /><span className="grow">{label}</span>{why && <span className="why">{why}</span>}</div>;
+  return <div className={`choice${pick === v ? ' on' : ''}`} onClick={() => { if (!busy) setPick(v); }}><input type="radio" disabled={busy} readOnly checked={pick === v} /><span className="choice-label">{label}</span>{why && <span className="why">{why}</span>}</div>;
 }
 function CustomChoice() {
   const { busy, pick, setPick, custom, setCustom, commitCustom } = useContext(Ctx);
@@ -66,7 +67,7 @@ function TermProposalBackground({ value }: { value: unknown }) {
     return () => { active = false; };
   }, [open, value, seriesId, series, revision]);
   if (!Array.isArray(value) || !value.length) return null;
-  return <details onToggle={e => setOpen(e.currentTarget.open)}><summary>查看译名参考的背景原文</summary>
+  return <details onToggle={e => setOpen(e.currentTarget.open)}><summary>查看日文原始依据（中文解释请用上方助手）</summary>
     <p className="small muted">这些原文帮助理解简称和昵称，不能单凭相似读音认定是同一人物。</p>
     {open && (rows ? rows.map(p => <div key={p.id} className="small faint"><span>§{p.ordinal}：</span><MarkedText text={p.source} /></div>) : <p className="small muted">{error || '正在核对原文…'}</p>)}
   </details>;
@@ -105,6 +106,7 @@ function ReviewCardForm({ item, compact, active, onSelect, onPreselect, disabled
   const seriesId = useApp(s => s.currentSeriesId);
   const selection = useFormDraft(`review-choice-${item.id}`, { pick: draft.stored && item.kind !== 'review-block' ? '__custom' : String(initialPick) }, { page: 'review', ...(seriesId ? { seriesId } : {}), objectId: item.id, title: `${item.title} · 复核选择` }, baseline);
   const pick = selection.value.pick || null;
+  const englishForm = useFormDraft(`review-english-${item.id}`, { english: /^[A-Za-z][A-Za-z0-9 '&.,!?():;\-]*$/.test(String(pl.termJp ?? '')) ? String(pl.termJp) : '', gloss: '' }, { page: 'review', ...(seriesId ? { seriesId } : {}), objectId: item.id, title: `${item.title} · 英文注释` }, baseline);
   const conflict = draft.conflict || (item.kind !== 'review-block' && (selection.conflict || selection.malformed));
   const [localBusy, setLocalBusy] = useState(false);
   const busy = localBusy || disabled;
@@ -143,7 +145,7 @@ function ReviewCardForm({ item, compact, active, onSelect, onPreselect, disabled
       if (!mounted.current || scope !== currentDraftSession()) return;
       if (r?.ok) {
         // Captured-record comparison protects edits made after submission.
-        draft.clear(); selection.clear();
+        draft.clear(); selection.clear(); englishForm.clear();
         if (!mounted.current || scope !== currentDraftSession()) return;
         setPreselectError('');
         if (item.kind === 'review-block' && item.paragraphId) {
@@ -230,6 +232,15 @@ function ReviewCardForm({ item, compact, active, onSelect, onPreselect, disabled
       body = <>
         {reading && <div className="small muted" style={{ marginBottom: 8 }}>假名读音：<b>{reading}</b>（罗马音，非英文词源）</div>}
         {(pl.examples as { text: string }[] | undefined)?.slice(0, 2).map((e, i) => <div key={i} className="small faint" style={{ fontFamily: 'var(--font-reading)' }}>{e.text}</div>)}
+        <details className="english-ruby-form" open={!!englishForm.value.english || undefined}>
+          <summary>保留英文正文，并加中文 ruby 注释</summary>
+          <p className="small muted">原文是英文时保留拼写；假名外来词请先核对英文原形，不能确定可请上方助手分析。确认后全书统一使用。</p>
+          <div className="english-ruby-fields"><label>英文正文<input className="input" value={englishForm.value.english} onChange={e=>englishForm.change({...englishForm.value,english:e.target.value})} /></label>
+          <label>上方中文注释<input className="input" value={englishForm.value.gloss} onChange={e=>englishForm.change({...englishForm.value,gloss:e.target.value})} /></label>
+          <DraftStatus draft={englishForm} />
+          <div className="english-ruby-preview"><ruby>{englishForm.value.english || 'English'}<rt>{englishForm.value.gloss || '中文释义'}</rt></ruby></div>
+          <B primary disabled={!englishForm.value.english.trim()||!englishForm.value.gloss.trim()||englishForm.conflict||englishForm.malformed} onClick={()=>decide({action:'choose',zh:englishForm.value.english,englishRuby:englishForm.value,acceptVariants:false})}>确认英文与注释</B></div>
+        </details>
         <TermProposalBackground value={pl.proposalBackground} />
         {cands.length === 0 && <div style={{ background: 'rgba(234, 179, 8, 0.1)', border: '1px solid rgba(234, 179, 8, 0.3)', borderRadius: 4, padding: '8px 12px', marginBottom: 8, fontSize: '0.9em', color: 'var(--color-text-secondary)' }}>⚠️ AI 没有生成译名选项。这可能是预处理阶段的数据异常，请手动输入译名或重新运行预处理。</div>}
         {cands.map(c => <Choice key={c.zh} v={c.zh} label={<>{c.zh}{pl.preSelected === c.zh && <Pill kind="info">AI 预选</Pill>}</>} why={`${c.basis === 'phonetic' ? '音译' : c.basis === 'official' ? '官方' : '意译'}${c.pros ? ` · ${c.pros}` : ''}${c.cons ? ` · 缺点：${c.cons}` : ''}`} />)}
@@ -349,7 +360,7 @@ function ReviewCardForm({ item, compact, active, onSelect, onPreselect, disabled
     <Ctx.Provider value={{ busy: busy || (item.kind !== 'review-block' && conflict), pick, setPick, custom, setCustom, commitCustom }}>
       <div className={`queue-item${active ? ' active' : ''}`} onClick={onSelect} tabIndex={onSelect ? 0 : undefined} onKeyDown={e => { if (e.target === e.currentTarget && onSelect && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSelect(); } }}>
         <div className="head"><Pill kind={KIND_PILL[item.kind]}>{REVIEW_KIND_LABELS[item.kind]}</Pill><span className="loc">{item.chapterLabel ?? ''}</span><span className="title grow ellipsis" title={reviewDisplayTitle(item)}>{reviewDisplayTitle(item)}</span></div>
-        {!compact && <ReviewEvidence paragraphId={item.paragraphId} />}
+        {!compact && <div className="review-item-tools"><ReviewAssistant id={item.id} onEnglish={item.kind==='term-proposal' ? (english,gloss)=>englishForm.change({english,gloss}) : undefined} /><ReviewEvidence paragraphId={item.paragraphId} /></div>}
         {item.kind === 'review-block' ? <>{draft.error && <p role="alert">{draft.error}</p>}{draft.stored && !draft.error && <span className="small muted">输入已暂存；需提交后才写入正式稿或知识</span>}</> : <DraftStatus draft={combinedDraft} />}
         {canPreselect && (preselectError || (selection.stored && chosen && chosen !== preSelected && chosen !== acknowledged)) && <div role="alert" className="notice small">
           {preselectError || '本地选择尚未确认写入预选；批量确认可能使用旧预选。'}

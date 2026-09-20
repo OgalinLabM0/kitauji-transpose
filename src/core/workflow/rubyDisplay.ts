@@ -1,3 +1,4 @@
+import { englishRubyRules, englishRubyMarks } from './termEnglishRuby';
 import type { ProjectStore, RubyAnnotation } from '@core/db';
 
 const ROMAJI: Readonly<Record<string, string>> = {
@@ -21,5 +22,7 @@ export function rubyForExport(store: ProjectStore, paragraphId: string, marks: r
   const speaker = paragraph && analysis?.speaker_char_id && (paragraph.sourceText.match(/[「『]/gu) ?? []).length <= 1
     ? store.knowledge.getCharacterAt(analysis.speaker_char_id, paragraph.seriesOrdinal) : undefined;
   const speakerType = speaker?.series_id === store.projects.getSeriesIdOfParagraph(paragraphId) ? speaker.first_person_type : null;
-  return marks.map(mark => ({ ...mark, rt: displayRubyReading(mark, speakerType) }));
+  const visible=marks.map(mark => ({ ...mark, rt: displayRubyReading(mark, speakerType) }));
+  const final=store.translations.latestFinal(paragraphId);
+  return paragraph&&final?englishRubyMarks(paragraph.sourceText,final.final_text,englishRubyRules(store.db,store.projects.getSeriesIdOfParagraph(paragraphId)),visible):visible;
 }

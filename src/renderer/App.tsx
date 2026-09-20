@@ -67,7 +67,7 @@ function AppContent() {
         </div>
         <div className="nav-footer">{provider ? `${provider.model}` : ''}</div>
       </nav>
-      <div className="main">
+      <div className={`main${page === 'review' ? ' review-focused' : ''}`}>
         <DeliveryOutcome />
         <div className="compact-navigation" aria-label="页面与当前书籍">
           <label>页面<select className="input" value={page} onChange={e => setPage(e.target.value as Page)}>{[...NAV, { id: 'settings' as Page, label: '设置', needSeries: false }].map(n => <option key={n.id} value={n.id} disabled={!!n.needSeries && !currentSeriesId}>{n.label}</option>)}</select></label>

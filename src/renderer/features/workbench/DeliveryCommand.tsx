@@ -45,7 +45,7 @@ export function DeliveryCommand({ seriesId, onSetup, onDetails }: { seriesId: st
   const changedScope = state && JSON.stringify(state.scope) !== JSON.stringify(work?.volumes.map(v => ({ id: v.id, number: v.volumeNumber })));
   const newLocation = !!state && (!!changedScope || /保存位置的文件已被改动或新增|册次范围已变化/.test(state.message));
   const canPause = ['翻译', '决定后重译', '回查重译'].includes(progress.phase);
-  const label = error ? '重试读取' : !ready ? '正在读取…' : progress.running ? progress.paused ? '已暂停' : '自动处理中' : newLocation ? '重新选择保存位置' : done ? '打开保存位置' : waiting ? `处理待确认项（${state.waitingDecisionIds!.length}）` : state && state.status !== 'done' ? '继续任务' : '开始翻译';
+  const label = progress.running && progress.phase==='review-assistant' ? '助手分析中' : error ? '重试读取' : !ready ? '正在读取…' : progress.running ? progress.paused ? '已暂停' : '自动处理中' : newLocation ? '重新选择保存位置' : done ? '打开保存位置' : waiting ? `处理待确认项（${state.waitingDecisionIds!.length}）` : state && state.status !== 'done' ? '继续任务' : '开始翻译';
   const message = progress.running ? progress.paused ? '已暂停 · 进度保留' : `正在${taskPhaseLabel(ours && state.phase === 'export' ? 'export' : progress.detail?.phase ?? (ours ? state.run?.currentRun?.phase : undefined) ?? progress.phase)}` : error ?? (!ready ? '正在核对保存任务' : newLocation ? '保存目标已变化' : done ? '成品已保存' : waiting ? autoContinue ? '需要你确认，完成后自动继续' : '需要你确认，完成后可继续任务' : state?.status === 'stopped' ? '已停止 · 进度保留' : state?.status === 'attention' ? '本次处理未完成 · 进度保留' : '一键处理全部已导入册');
   const reason = progress.running ? progress.message : state && !done ? state.message : '';
   async function act() {

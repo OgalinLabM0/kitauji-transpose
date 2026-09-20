@@ -1,3 +1,4 @@
+import { askReviewAssistant, readReviewAssistant } from '@core/workflow/reviewAssistant';
 import { ReadViews } from '../readViews';
 import { scheduleDataMove } from '../dataLocation';
 import { fileURLToPath } from 'node:url';
@@ -734,6 +735,16 @@ export class AppService {
         context: (pid) => ({ before: s.projects.previousParagraphs(id.parse(pid), 4).map(b => ({ id: b.id, source: b.sourceText, final: b.finalText })), after: s.projects.nextParagraphs(pid, 2).map(a => ({ id: a.id, source: a.sourceText })) }),
       },
       review: {
+        assistant: async (qid, question) => {
+          const queueId=id.parse(qid);
+          if(question===undefined)return readReviewAssistant(s,queueId);
+          return this.withTask(async()=>{
+            this.ensureProvider();const abort=new AbortController();
+            this.current={kind:'prep',run:new PrepRunner(s,this.ai,{signal:abort.signal}),abort};
+            this.latestProgress={...this.latestProgress,phase:'review-assistant',message:'正在解释待确认项'};this.emit('progress',this.latestProgress);
+            return askReviewAssistant(s,this.ai,queueId,z.string().trim().min(1).max(1500).parse(question),abort.signal);
+          });
+        },
         list: (sid, status, vid) => scopedReview(s, id.parse(sid), status ?? 'pending', vid ? id.parse(vid) : undefined),
         counts: (sid, vid) => { const out: Record<string, number> = {}; for (const q of scopedReview(s, id.parse(sid), 'pending', vid ? id.parse(vid) : undefined)) out[q.kind] = (out[q.kind] ?? 0) + 1; return out; },
         decide: async (qid, decision) => {

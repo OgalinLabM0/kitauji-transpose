@@ -1,3 +1,4 @@
+import { englishRubyNotes, englishRubySchema } from './termEnglishRuby';
 import {inheritForeignNotes} from './foreignNotes';
 import { beginKnowledgeDecision, finishKnowledgeDecision } from './knowledgeDecisionJournal';
 import { beginChangeDecision, finishChangeDecision } from './changeDecisionJournal';
@@ -17,7 +18,7 @@ export type Decision =
   | { kind: 'honorific-first'; action: 'choose'; zh: string; allowVariation?: boolean; relationStage?: string | null; applyToText?: boolean }
   | { kind: 'quirk-candidate'; action: 'confirm' | 'reject'; pattern?: string }
   | { kind: 'gender-plural'; action: 'confirm' | 'set'; gender?: string | null; plurality?: string }
-  | { kind: 'term-proposal'; action: 'choose' | 'reject'; zh?: string; lockLevel?: 'confirmed' | 'hard-locked'; acceptVariants?: boolean }
+  | { kind: 'term-proposal'; action: 'choose' | 'reject'; zh?: string; lockLevel?: 'confirmed' | 'hard-locked'; acceptVariants?: boolean; englishRuby?: { english: string; gloss: string } }
   | { kind: 'wordplay'; action: 'accept' | 'custom' | 'literal'; zh?: string; notes?: string | null }
   | { kind: 'ambiguity'; action: 'confirm' | 'set'; zh?: string; addAsSense?: boolean; createTerm?: boolean; termType?: string }
   | { kind: 'glossary-deviation'; action: 'accept-here' | 'add-sense' | 'revert'; senseGloss?: string | null; contextHint?: string | null }
@@ -135,8 +136,9 @@ export class DecisionService {
           const term = this.store.glossary.activeTerms(seriesId).find(t => t.id === pl.termId);
           if (!term) { if (d.action === 'reject') { message = '术语已不存在，提案已关闭'; break; } failed = `术语「${pl.termJp ?? ''}」已不在术语表中（可能已被删除），无法写入译名；可「不是术语」关闭此提案`; break; }
           if (d.action === 'reject') { this.store.glossary.deleteTerm(term.id); message = '已从术语表移除'; break; }
+          if (d.englishRuby) { const check=englishRubySchema.safeParse(d.englishRuby); if(!check.success){failed='英文原形或中文注释格式不正确';break;} d.zh=check.data.english; }
           if (!d.zh?.trim()) { failed = '未提供译名'; break; }
-          this.store.glossary.upsertTerm({ seriesId, introducedVolume: term.introduced_volume, termJp: term.term_jp, termZh: d.zh, termType: term.term_type, lockLevel: d.lockLevel ?? 'confirmed' });
+          this.store.glossary.upsertTerm({ seriesId, introducedVolume: term.introduced_volume, termJp: term.term_jp, termZh: d.zh, termType: term.term_type, lockLevel: d.lockLevel ?? 'confirmed', ...(d.englishRuby ? {notes:englishRubyNotes(term.notes,d.englishRuby)} : {}) });
           // 人名译名同步到人物档案中文名（档案为空时）
           const synced = this.store.knowledge.syncNameZhFromTerm(seriesId, term.term_jp, d.zh);
           if (d.acceptVariants && Array.isArray(pl.variants)) for (const v of pl.variants as { variant_jp: string; zh: string; variant_type: string; relation_stage: string | null; scene_scope: string | null; evidence_ids: string[] }[]) this.store.glossary.addVariant({ termId: term.id, variantJp: v.variant_jp, variantZh: v.zh, variantType: v.variant_type, relationStage: v.relation_stage, sceneScope: v.scene_scope, evidenceIds: v.evidence_ids });

@@ -50,7 +50,15 @@ export function Toasts() {
 }
 
 /** 阅读视图只显示正文；排版标记仍保留在原始文本、编辑器和导出数据中。 */
-export function MarkedText({ text }: { text: string }) {
+export function MarkedText({ text, ruby }: { text: string; ruby?: {start:number;end:number;rt:string}[] | undefined }) {
+  if(ruby?.length){
+    const plain=text.replace(/⟦\/?\d+⟧/g,'');let end=0;const parts:ReactNode[]=[];
+    for(const [i,r] of [...ruby].sort((a,b)=>a.start-b.start).entries()){
+      if(r.start<end||r.end>plain.length||r.end<=r.start)continue;
+      parts.push(plain.slice(end,r.start),<ruby key={i}>{plain.slice(r.start,r.end)}<rt>{r.rt}</rt></ruby>);end=r.end;
+    }
+    parts.push(plain.slice(end));return <>{parts}</>;
+  }
   const parts = text.split(/(⟦\/?\d+⟧)/g);
   return <>{parts.map((p, i) => /^⟦\/?\d+⟧$/.test(p) ? null : <span key={i}>{p}</span>)}</>;
 }

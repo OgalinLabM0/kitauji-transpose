@@ -108,7 +108,7 @@ export function ReviewPage() {
   const move = (step: number) => { if (!locked) { const item = shown[activeIndex + step]; if (item) setActive(item.id); } };
   useEffect(() => {
     if (!active) return;
-    const frame = requestAnimationFrame(() => document.getElementById(`q-${active}`)?.scrollIntoView({ block: 'nearest' }));
+    const frame = requestAnimationFrame(() => { if(tab==='pending')document.querySelector('.review-workspace')?.scrollTo({top:0});else document.getElementById(`q-${active}`)?.scrollIntoView({block:'nearest'}); });
     return () => cancelAnimationFrame(frame);
   }, [active]);
   useEffect(() => {
@@ -123,19 +123,19 @@ export function ReviewPage() {
   return <>
     <div className="page-header" style={{ flexWrap: 'wrap' }}><h1 style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>待确认</h1><select className="input" style={{ width: 'auto', maxWidth: '100%' }} aria-label="问题范围" value={scope} disabled={locked} onChange={event => { if (!locked) setScope(event.target.value as 'volume' | 'series'); }}><option value="volume">本册与共享知识</option><option value="series">整个系列</option></select><span className="sub small" style={{ flex: '1 1 24rem', minWidth: 0 }}>这里只需处理软件无法自动确定的译法或问题。当前分类 {shown.length} 项 / 当前范围 {items.length} 项</span></div>
     <div className="tabs" style={{ padding: '0 24px' }}>{(['pending', 'resolved', 'dismissed'] as const).map(value => <button key={value} disabled={locked} className={`tab${tab === value ? ' active' : ''}`} onClick={() => { if (!locked) setTab(value); }}>{{ pending: '待处理', resolved: '已处理', dismissed: '已忽略' }[value]}</button>)}</div>
-    <div className="page-body">
+    <div className="page-body review-workspace">
       <div className="filters"><button disabled={locked} className={`chip${filter === null ? ' on' : ''}`} onClick={() => { if (!locked) setFilter(null); }}>全部 {items.length}</button>{ORDER.filter(kind => counts[kind]).map(kind => <button key={kind} disabled={locked} className={`chip${filter === kind ? ' on' : ''}`} onClick={() => { if (!locked) setFilter(filter === kind ? null : kind); }}>{REVIEW_KIND_LABELS[kind]} {counts[kind]}</button>)}</div>
       {tab === 'pending' && <details className="review-batch-tools"><summary onClick={event=>{if(operationBusy)event.preventDefault();}}>批量处理当前列表</summary><ScopedReviewActions key={`${listKey}:${filter}`} items={shown}
         scope={{ seriesId: currentSeriesId, ...(scope === 'volume' && currentVolumeId ? { volumeId: currentVolumeId } : {}), ...(filter ? { kind: filter } : {}) }}
         scopeLabel={scope === 'volume' ? '本册与共享知识' : '整个系列'} identityToken={identity.token}
         ready={readyScope && !loading && loadedKey === listKey} disabled={progress.running || cardBusy}
         execute={request => api.review.runScoped(request)} onBusy={setOperationBusy} onRefresh={() => setRefreshEpoch(value => value + 1)} cancel={() => api.workflow.cancel()} /></details>}
-      <div className="review-navigation"><button className="btn btn-secondary btn-sm" disabled={locked || loading || activeIndex <= 0} onClick={() => move(-1)}>上一项</button><span aria-live="polite">{activeIndex < 0 ? 0 : activeIndex + 1} / {shown.length}</span><button className="btn btn-secondary btn-sm" disabled={locked || loading || activeIndex < 0 || activeIndex >= shown.length - 1} onClick={() => move(1)}>下一项</button></div>
+      <div className="review-navigation"><select className="input review-item-picker" aria-label="选择待处理项" value={active ?? ''} disabled={locked||loading} onChange={e=>setActive(e.target.value)}>{shown.map((item,index)=><option key={item.id} value={item.id}>{index+1}. {reviewDisplayTitle(item)}</option>)}</select><button className="btn btn-secondary btn-sm" disabled={locked || loading || activeIndex <= 0} onClick={() => move(-1)}>上一项</button><span aria-live="polite">{activeIndex < 0 ? 0 : activeIndex + 1} / {shown.length}</span><button className="btn btn-secondary btn-sm" disabled={locked || loading || activeIndex < 0 || activeIndex >= shown.length - 1} onClick={() => move(1)}>下一项</button></div>
       {!readyScope && <p className="muted">请先选择有效的册；本册未选择时不会扩大到整个系列。</p>}
       {loading && <p className="muted">正在读取问题…</p>}
       {readyScope && !loading && loadError && <div className="notice" role="alert"><strong>问题列表读取失败</strong><p className="small">请重试读取，成功后再处理问题。</p><DiagnosticDetails value={loadError} />{items.length>0&&<p className="small">下方是上次读取的记录，暂不能操作。重新读取成功后再处理，已输入的草稿保留。</p>}<button className="btn btn-secondary btn-sm" onClick={() => setRefreshEpoch(value => value + 1)}>重试读取</button></div>}
       {readyScope && !loading && loadedKey === listKey && !loadError && !shown.length && <div className="empty"><h2>当前分类没有问题</h2></div>}
-      <div inert={!listReady}>{shown.map(item => tab === 'pending'
+      <div inert={!listReady}>{(tab === 'pending' ? shown.filter(item=>item.id===active) : shown).map(item => tab === 'pending'
         ? <div key={`${listKey}:${item.id}`} id={`q-${item.id}`} className="review-item-wrapper"><ReviewCard item={item} active={active === item.id} disabled={operationBusy || progress.running || !listReady} onBusy={value => cardActivity(item.id, value)} onSelect={() => { if (!locked && listReady) setActive(item.id); }} onPreselect={(id, zh) => setItems(list => list.map(row => row.id === id ? { ...row, payload: { ...row.payload, preSelected: zh, preSelectedBasis: '人工改选' } } : row))} /></div>
         : tab === 'resolved' && item.kind === 'stale-knowledge' && item.payload.subtype !== 'character-field' && !!item.payload.candidateId && !item.payload.changeDecision
           ? <div key={`${currentSeriesId}:${item.id}`} id={`q-${item.id}`} className={`queue-item${active === item.id ? ' active' : ''}`} aria-current={active === item.id ? 'true' : undefined}><h3>{reviewDisplayTitle(item)}</h3><ReviewItemDiagnostics item={item} /><LegacyChangeRecovery item={item} seriesId={currentSeriesId} /></div>

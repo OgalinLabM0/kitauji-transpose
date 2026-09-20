@@ -458,3 +458,53 @@ table.table { width: 100%; border-collapse: collapse; }
 }
 
 .task-scope-switch,.task-discovery-error { display:flex; align-items:center; gap:12px; padding:4px 24px; background:var(--bg-subtle); font-size:12px; }
+
+/* Review workspace: keep the decision and its label readable before diagnostics. */
+.choice { display:grid; grid-template-columns:18px minmax(0,1fr); align-items:start; gap:8px 12px; padding:14px 16px; }
+.choice .choice-label { min-width:0; overflow-wrap:anywhere; font-weight:500; }
+.choice .why { grid-column:2; font-size:var(--text-sm); line-height:1.65; overflow-wrap:anywhere; }
+.choice > .input { min-width:0; width:100%; }
+.review-focused .delivery-command.task-command { padding:10px 18px; gap:14px; grid-template-columns:minmax(0,1fr) auto; }
+.review-focused .task-stages,.review-focused .task-reason,.review-focused .task-next-action,.review-focused .task-progress-heading,.review-focused .task-scope-line:not([aria-label]) { display:none; }
+.review-focused .task-command-title { display:none; }
+.review-focused .task-scope-line[aria-label] { margin:0; flex-direction:column; align-items:start; }
+.review-focused .delivery-command-actions { display:flex; flex-wrap:wrap; align-items:center; max-width:480px; gap:4px; }
+.review-focused .page-header { padding:10px 20px; gap:12px; }
+.review-focused .page-header h1 { font-size:22px; }
+.review-workspace { padding:12px 20px; }
+.review-workspace .filters { margin-bottom:6px; }
+.review-navigation { position:sticky; top:0; z-index:2; background:var(--bg-base); display:flex; gap:10px; align-items:center; padding:8px 0; }
+.review-item-picker { flex:1; min-width:0; max-width:65%; }
+.review-item-tools { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:10px 0; }
+.review-item-tools > .review-evidence { flex:1; }
+.english-ruby-form { padding:12px; border:1px solid var(--border-default); border-radius:8px; margin:12px 0; }
+.english-ruby-form label { display:block; margin:10px 0; }
+.english-ruby-form label .input { display:block; width:100%; margin-top:5px; }
+.english-ruby-preview { padding:18px 8px; font-size:22px; }
+.review-assistant { position:fixed; right:16px; top:100px; bottom:72px; width:min(520px,calc(100vw - 32px)); z-index:30; background:var(--bg-surface); border:1px solid var(--border-default); box-shadow:0 8px 32px #0002; border-radius:12px; padding:16px; display:flex; flex-direction:column; min-height:0; }
+.review-assistant header { display:flex; align-items:center; justify-content:space-between; }
+.assistant-transcript { flex:1; min-height:0; overflow:auto; padding:8px 4px; }
+.assistant-answer { white-space:pre-wrap; line-height:1.8; }
+.assistant-question { padding:10px; background:var(--accent-subtle); border-radius:6px; }
+.assistant-evidence { border-left:2px solid var(--border-default); padding:0 12px; margin:14px 0; line-height:1.7; }
+.assistant-evidence details { color:var(--text-muted); font-size:var(--text-xs); }
+.assistant-suggestion { display:flex; flex-wrap:wrap; align-items:center; gap:16px; padding:16px 0; }
+.review-assistant textarea { width:100%; min-height:72px; max-height:180px; resize:vertical; padding:10px; border:1px solid var(--border-default); border-radius:6px; background:var(--bg-base); color:var(--text-primary); }
+@media(min-width:1400px){ .review-workspace:has(.review-assistant) { padding-right:555px; } }
+@media(max-width:1000px){ .review-focused .delivery-command.task-command { grid-template-columns:1fr; gap:6px; } .review-item-picker { max-width:100%; flex-basis:100%; } .review-navigation { flex-wrap:wrap; } }
+
+.english-ruby-form[open] { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px 14px; }
+.english-ruby-form > summary,.english-ruby-form > p { grid-column:1 / -1; margin:0; }
+.english-ruby-form label { margin:0; }
+.english-ruby-form .english-ruby-preview { padding:12px 4px; font-size:20px; }
+.english-ruby-form > button { justify-self:start; align-self:center; }
+@media(max-width:800px){ .english-ruby-form[open] { grid-template-columns:minmax(0,1fr); } }
+
+/* details has an anonymous content box in Chromium; grid belongs inside it. */
+.english-ruby-form[open] { display:block; }
+.english-ruby-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px 14px; margin-top:8px; }
+.english-ruby-fields > button { justify-self:start; align-self:center; }
+.english-ruby-fields > .draft-status { grid-column:1 / -1; }
+@media(max-width:800px){ .english-ruby-fields { grid-template-columns:minmax(0,1fr); } }
+
+.review-focused .task-progress-view.is-complete .task-progress-heading { display:flex; margin:0; }
