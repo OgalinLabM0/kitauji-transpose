@@ -1,7 +1,7 @@
 {
   "name": "kitauji-transpose",
   "productName": "北宇治译奏部",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "private": true,
   "description": "KitaUji Transpose：日文轻小说翻译与校对工作台",
   "type": "module",

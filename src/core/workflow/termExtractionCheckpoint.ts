@@ -7,13 +7,16 @@ import { visibleNameSource } from '../validation/nameEvidence';
 type Paragraph = { id: string; sourceText: string };
 export const TERM_EXTRACTION_CHECKPOINT_CONTRACT = createHash('sha256')
   .update(JSON.stringify(['term-extraction-batch-v1', TERM_EXTRACT_PROMPT])).digest('hex');
+// Only this previous successful extraction contract is eligible. Raw responses
+// are re-parsed under current source validation; no failed response is imported.
+const LEGACY_EXTRACTION_CONTRACT = '16463d576fc82f858d9d9441c033e867e2b42986e05eca3e12069f74aa4c20a0';
 const PREFIX = 'prep:term-extraction-batch:';
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 type Provenance = { aiCallId?: string } | { exchangeId: string; sourcePath?: string; sourceHash?: string; index?: number };
 export interface TermExtractionCheckpoint { raw: string; value: TermExtractOutput; provenance: Provenance }
 
 /** A cache hit is one successful model batch, never a chapter/preparation certificate. */
-function identity(store: ProjectStore, user: string, batch: readonly Paragraph[]): { key: string; signature: string } | null {
+function identity(store: ProjectStore, user: string, batch: readonly Paragraph[], contract = TERM_EXTRACTION_CHECKPOINT_CONTRACT): { key: string; signature: string } | null {
   if (!batch.length || new Set(batch.map(p => p.id)).size !== batch.length) return null;
   let input: unknown;
   try { input = JSON.parse(user); } catch { return null; }
@@ -32,17 +35,24 @@ function identity(store: ProjectStore, user: string, batch: readonly Paragraph[]
     seriesId = series;
     sources.push([series, row.chapterId, row.seriesOrdinal, row.id, row.sourceText]);
   }
-  const signature = hash(JSON.stringify([TERM_EXTRACTION_CHECKPOINT_CONTRACT, user, sources]));
+  const signature = hash(JSON.stringify([contract, user, sources]));
   return { key: PREFIX + signature, signature };
 }
 
 export function loadTermExtractionCheckpoint(store: ProjectStore, user: string, batch: readonly Paragraph[]): TermExtractionCheckpoint | null {
-  const id = identity(store, user, batch); if (!id) return null;
+  for (const contract of [TERM_EXTRACTION_CHECKPOINT_CONTRACT, LEGACY_EXTRACTION_CONTRACT]) {
+    const result = readCheckpoint(store, user, batch, contract);
+    if (result) return result;
+  }
+  return null;
+}
+function readCheckpoint(store: ProjectStore, user: string, batch: readonly Paragraph[], contract: string): TermExtractionCheckpoint | null {
+  const id = identity(store, user, batch, contract); if (!id) return null;
   const row = store.db.get<{ value: string }>('SELECT value FROM meta WHERE key=?', [id.key]);
   if (!row) return null;
   try {
     const cached = JSON.parse(row.value) as { signature?: unknown; raw?: unknown; rawHash?: unknown; provenance?: unknown; contract?: unknown };
-    if (!cached || cached.signature !== id.signature || cached.contract !== TERM_EXTRACTION_CHECKPOINT_CONTRACT
+    if (!cached || cached.signature !== id.signature || cached.contract !== contract
       || typeof cached.raw !== 'string' || cached.rawHash !== hash(cached.raw)) return null;
     const parsed = parseTermExtract(cached.raw, batch);
     if (!parsed.ok) return null;

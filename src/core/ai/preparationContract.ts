@@ -7,7 +7,7 @@ import { TERM_EXTRACT_PROMPT } from './prompts/termPrompts';
  * Terms certify extraction only: existing translation proposals are not rerun by extraction. */
 const contracts = {
   preread: ['split-preread-literal-name-review-v11', CHARACTER_PRE_READ_PROMPT, EVENT_PRE_READ_PROMPT],
-  terms: ['term-extraction-name-components-v4', TERM_EXTRACT_PROMPT, TERM_SELECTION_INSTRUCTION],
+  terms: ['term-extraction-context-selector-v5', TERM_EXTRACT_PROMPT, TERM_SELECTION_INSTRUCTION],
 } as const;
 export const preparationContract = (kind: keyof typeof contracts): string =>
   createHash('sha256').update(JSON.stringify(contracts[kind])).digest('hex');
@@ -23,6 +23,8 @@ const surfaceNameRevision = {
   current: '24e293a6ff2ee337b149d4457ddd5e453d2ef9e1d729eca461a05e92cb19309d',
 };
 export function compatiblePreparationContracts(kind: keyof typeof contracts, current = preparationContract(kind)): readonly string[] {
+  // Previously completed extraction AND independent selection remain valid.
+  if (kind === 'terms' && current === 'faa61c1067bf9491c59c68609cc233b2ec63a4e9ebb963ac2dfa9a417415b96a') return [current, '09427970eba32b397e3e0ccbd18b779374ee2fe131dbc580826ea560be59e71a'];
   if (kind === 'terms' && current === '836ab0a5642137ff9d7c6c0772101c4f0bab9c6ee3b4f8a17893b5c68e8af9ef') return [current, 'a35b122cdd1886e3606285f0020e4b97588efaef88afca31e55929cc8d865486'];
   // Earlier successful facts remain valid; compatibility does not assert that
   // earlier runs performed the newly added semantic review for generic shapes.

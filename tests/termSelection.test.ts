@@ -84,3 +84,25 @@ test('re-extracted active component prevents restoration from duplicating the sa
  const names=f.store.glossary.activeTerms(f.seriesId).filter(t=>t.term_jp==='ミナ');assert.equal(names.length,1);assert.equal(names[0]!.id,current);
  assert.equal(f.store.db.get<{valid_to_para:number}>('SELECT valid_to_para FROM terms WHERE id=?',[old])!.valid_to_para,0);
 });
+
+test('contextual selector handles connected epithet, retains name, and never confirms Chinese', async t=>{
+ const f=fixture('「青銅のミレナ」は騎士ミレナの異名だ。');t.after(()=>f.store.close());
+ f.store.glossary.upsertTerm({seriesId:f.seriesId,introducedVolume:1,termJp:'青銅のミレナ',termZh:null,termType:'person',lockLevel:'suggested',evidenceIds:f.ids});
+ let calls=0;
+ const ai=fakeAi(f.store,req=>{calls++;const input=JSON.parse(req.user);return {decisions:input.candidates.map((c:any)=>c.jp==='青銅のミレナ'?{id:c.id,action:'split',category:'proper',reason:'普通の称号と人物名',cores:[{jp:'ミレナ',type:'person'}],dropped:[{jp:'青銅',reason:'漢字の称号'}]}:{id:c.id,action:'keep',category:'proper',reason:'人物の名前',cores:[]})};});
+ await selectTermCandidates(f.store,ai,f.volumeId);assert.equal(calls,2);
+ assert.deepEqual(f.store.glossary.activeTerms(f.seriesId).map(t=>[t.term_jp,t.term_zh,t.lock_level]),[['ミレナ',null,'suggested']]);
+});
+
+test('already split extraction preserves source-proven company components without a parent row', async t => {
+  const f=fixture('オーロラ・プロダクションに所属する。');t.after(()=>f.store.close());
+  for(const word of ['オーロラ','プロダクション']) f.store.glossary.upsertTerm({seriesId:f.seriesId,introducedVolume:1,termJp:word,termZh:null,termType:word==='オーロラ'?'organization':'concept',lockLevel:'suggested',evidenceIds:f.ids});
+  reconcileTermCandidates(f.store,f.volumeId,[{version:'kana-components-v2',parent:'オーロラ・プロダクション',parts:['オーロラ','プロダクション'],reason:'deterministic components'}]);
+  await selectTermCandidates(f.store,fakeAi(f.store,()=>{throw Error('Explicit components cannot be reclassified away');}),f.volumeId);
+  assert.deepEqual(new Set(f.store.glossary.activeTerms(f.seriesId).map(x=>x.term_jp)),new Set(['オーロラ','プロダクション']));
+  f.store.db.run('UPDATE paragraphs SET source_text=? WHERE id=?',['プロダクションとは制作活動だ。',f.ids[0]!]);
+  let calls=0;
+  await selectTermCandidates(f.store,fakeAi(f.store,req=>{calls++;return {decisions:JSON.parse(req.user).candidates.map((c:any)=>({id:c.id,action:'exclude',category:'ordinary',reason:'current ordinary usage',cores:[]}))};}),f.volumeId);
+  assert.equal(calls,1,'changed source invalidates parent rule');
+  assert.ok(!f.store.glossary.activeTerms(f.seriesId).some(x=>x.term_jp==='プロダクション'));
+});

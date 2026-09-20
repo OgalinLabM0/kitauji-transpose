@@ -53,6 +53,14 @@ export async function selectTermCandidates(store:ProjectStore,ai:AiClient,volume
   // User's name-component rule takes precedence over a model calling a surname or
   // company-name component an ordinary word. This never supplies a Chinese name.
   const requiredParts=new Set<string>();
+  for (const row of store.db.all<{value:string}>('SELECT value FROM meta WHERE key LIKE ?', ['term-component-source:%'])) {
+    let receipt: {volumeId?:string; parent?:string; kind?:string};
+    try { receipt = JSON.parse(row.value); } catch { continue; }
+    if (receipt.volumeId !== volumeId || typeof receipt.parent !== 'string' || !['person','organization'].includes(receipt.kind ?? '')) continue;
+    if (!paras.some(p => containsVisibleQuote(p.sourceText, receipt.parent!))) continue;
+    const parts = companyTermParts(receipt.parent, receipt.kind!);
+    if (parts && parts.length > 1) for (const part of parts) if (!isHanOnlyTerm(part.term_jp)) requiredParts.add(part.term_jp);
+  }
   // Extraction may already return name components, so there is no retired
   // parent term and no term-granularity receipt. Current person observations
   // and the literal full name provide the same component rule in that case.

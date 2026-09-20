@@ -144,8 +144,8 @@ export const termExtractOutputSchema = z.object({
   terms: z.array(z.object({
     term_jp: z.string().min(1), term_type: termType, sense_identity: z.string().default(''),
     occurrence_paragraph_ids: idList, split_suggestion: z.string().nullable().default(null), confidence: conf.default(0.5), conflicts: z.array(z.string()).default([]),
-    components: z.array(z.object({ term_jp: z.string().min(1), term_type: termType })).max(6).default([]),
-    split_preserves_meaning: z.boolean().default(false), split_reason: z.string().default(''),
+    components: z.array(z.object({ term_jp: z.string().min(1), term_type: termType })).max(6).default([]).catch([]),
+    split_preserves_meaning: z.boolean().default(false).catch(false), split_reason: z.string().default('').catch(''),
   })),
 });
 export type TermExtractOutput = z.infer<typeof termExtractOutputSchema>;

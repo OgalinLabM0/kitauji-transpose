@@ -51,3 +51,16 @@ test('compatible chapter receipt is reused without rewriting it',t=>{
  f.store.db.run("UPDATE paragraphs SET source_text='雪。' WHERE id=?",[p.id]);
  assert.equal(f.store.projects.prepDoneChapters('preread',f.volumeId).size,0);
 });
+
+test('completed legacy terms retain source-sensitive preparation receipts',t=>{
+ const f=fixture();t.after(()=>f.store.close());const p=f.store.projects.getParagraph(f.paragraphId)!;
+ f.store.projects.markPrepDone('terms',p.chapterId);
+ const key=`prep:terms:${p.chapterId}`;
+ const proof=JSON.parse(f.store.db.get<{value:string}>('SELECT value FROM meta WHERE key=?',[key])!.value);
+ proof.contract='09427970eba32b397e3e0ccbd18b779374ee2fe131dbc580826ea560be59e71a';
+ const raw=JSON.stringify(proof);f.store.db.run('UPDATE meta SET value=? WHERE key=?',[raw,key]);
+ assert.ok(f.store.projects.prepDoneChapters('terms',f.volumeId).has(p.chapterId));
+ assert.equal(f.store.db.get<{value:string}>('SELECT value FROM meta WHERE key=?',[key])!.value,raw);
+ f.store.db.run("UPDATE paragraphs SET source_text='雨。' WHERE id=?",[p.id]);
+ assert.equal(f.store.projects.prepDoneChapters('terms',f.volumeId).size,0);
+});

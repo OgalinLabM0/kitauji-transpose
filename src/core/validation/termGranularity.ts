@@ -33,18 +33,13 @@ export function normalizeTermGranularity<T extends ExtractedTerm>(term: T): T[] 
   const base = ['person', 'honorific'].includes(term.term_type) ? term.term_jp.replace(HONORIFIC_SUFFIX_RE, '') : term.term_jp;
   if (!base || isHanOnlyTerm(base) || isOrdinaryRoleTerm(base)) return [];
   const forced = companyTermParts(base, term.term_type);
-  // Honorific stripping is a deterministic separate step. Model components
-  // describing the original full address must not be compared to the shortened base.
-  const proposed = base !== term.term_jp ? [] : term.components;
-  if (!forced && proposed.length && term.split_preserves_meaning) {
-    if (!term.split_reason.trim()) throw Error('复合术语拆分必须说明本处含义不变的依据');
-    const joined = proposed.map(p => p.term_jp).join('');
-    if (proposed.length < 2 || proposed.some(p => !p.term_jp.trim() || p.term_jp === base) || joined !== base.replace(/[・\s]/gu, '')) throw Error('拆分项必须按原顺序完整组成原词，不得增字、漏字或任意截取');
-  }
-  const pieces = forced ?? (term.split_preserves_meaning && proposed.length ? proposed : null);
-  if (!pieces) return [{ ...term, term_jp: base, components: [], split_suggestion: null }];
+  // Extraction owns literal candidates, not semantic decomposition. Optional
+  // model split hints are never authoritative; the independent contextual
+  // selector receives the intact candidate and its source before proposals.
+  const pieces = forced;
+  if (!pieces) return [{ ...term, term_jp: base, components: [], split_preserves_meaning: false, split_reason: '', split_suggestion: null }];
   const kept = pieces.filter(p => !isHanOnlyTerm(p.term_jp) && !isOrdinaryRoleTerm(p.term_jp));
-  const receipt: TermSplitReceipt = { version: TERM_GRANULARITY_VERSION, parent: term.term_jp, parts: kept.map(p => p.term_jp), reason: forced ? '去除外层符号及普通搭配，姓名或组织名按组成部分分别确认' : term.split_reason };
+  const receipt: TermSplitReceipt = { version: TERM_GRANULARITY_VERSION, parent: term.term_jp, parts: kept.map(p => p.term_jp), reason: '去除外层符号及普通搭配，姓名或组织名按组成部分分别确认' };
   return kept.map(p => ({ ...term, term_jp: p.term_jp, term_type: p.term_type as T['term_type'], sense_identity: '', components: [], split_suggestion: JSON.stringify(receipt) }));
 }
 

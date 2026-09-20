@@ -1,4 +1,5 @@
 import type { ProjectStore } from '@core/db';
+import { createHash } from 'node:crypto';
 import { nowIso } from '../db/database';
 import { containsVisibleQuote } from '../validation/nameEvidence';
 import { companyTermParts, isHanOnlyTerm, isOrdinaryRoleTerm, TERM_GRANULARITY_VERSION, type TermSplitReceipt } from '../validation/termGranularity';
@@ -23,6 +24,20 @@ export function reconcileTermCandidates(store: ProjectStore, volumeId: string, s
   const paragraphs = store.projects.listParagraphIdsByVolume(volumeId).map(id => store.projects.getParagraph(id)!);
   const retired: string[] = [], created: string[] = [];
   store.transaction(() => {
+    // Extraction can already return separate components: preserve the proven
+    // parent rule even when no parent row ever existed in the glossary.
+    for (const split of splits) {
+      if (split.version !== TERM_GRANULARITY_VERSION) continue;
+      const kind = (['person', 'organization'] as const).find(kind => {
+        const parts = companyTermParts(split.parent, kind);
+        return parts && parts.length > 1 && JSON.stringify(parts.map(p => p.term_jp)) === JSON.stringify(split.parts);
+      });
+      if (!kind || !paragraphs.some(p => containsVisibleQuote(p.sourceText, split.parent))) continue;
+      const key = createHash('sha256').update(JSON.stringify([volumeId, split.parent, kind])).digest('hex');
+      store.db.run('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', [
+        `term-component-source:${key}`, JSON.stringify({ volumeId, parent: split.parent, kind })
+      ]);
+    }
     for (const term of store.glossary.activeTerms(seriesId)) {
       if (term.lock_level !== 'suggested' || term.term_zh || term.senses.length) continue;
       const evidence = paragraphs.filter(p => containsVisibleQuote(p.sourceText, term.term_jp));
